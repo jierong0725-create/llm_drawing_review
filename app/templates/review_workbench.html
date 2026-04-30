@@ -109,8 +109,10 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim }) {
   const containerRef = useRef(null);
   const { zoom, offsetX, offsetY, fitScreen, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, handleDblClick } = usePanZoom(containerRef);
   const [imageError, setImageError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    setImageError(false);
     fitScreen();
   }, [drawing?.id]);
 
@@ -127,7 +129,7 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim }) {
     [dims, zoom, showGuides]
   );
 
-  const imgSrc = drawing ? `/static/drawings/${drawing.id}/page_1.jpg` : null;
+  const imgSrc = drawing ? `/static/drawings/${drawing.id}/page_1.jpg?t=${reloadKey}` : null;
 
   return React.createElement("div", {
     ref: containerRef,
@@ -145,7 +147,19 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim }) {
       ? React.createElement("div", { style: canvasStyles.fallback },
           React.createElement("div", { style: canvasStyles.fallbackIcon }, "📐"),
           React.createElement("div", { style: canvasStyles.fallbackText }, "图纸图片未生成"),
-          React.createElement("div", { style: canvasStyles.fallbackHint }, "请重新上传版本以生成预览图"),
+          React.createElement("div", { style: canvasStyles.fallbackHint }, "请重新上传版本或点击下方按钮重新生成"),
+          React.createElement("button", {
+            onClick: async () => {
+              try {
+                const resp = await fetch(`/parts/${partId}/versions/${versionId}/reprocess`, { method: "POST" });
+                if (resp.ok) {
+                  setReloadKey((k) => k + 1);
+                  setImageError(false);
+                }
+              } catch (err) { /* silently fail */ }
+            },
+            style: canvasStyles.reprocessBtn,
+          }, "重新生成图片"),
         )
       : imgSrc && React.createElement("img", {
           src: imgSrc,
@@ -221,7 +235,12 @@ const canvasStyles = {
   },
   fallbackIcon: { fontSize: 48, marginBottom: "var(--space-12)", opacity: 0.5 },
   fallbackText: { fontSize: 15, fontWeight: 600, color: "var(--ink-secondary)", marginBottom: "var(--space-4)" },
-  fallbackHint: { fontSize: 12 },
+  fallbackHint: { fontSize: 12, marginBottom: "var(--space-16)" },
+  reprocessBtn: {
+    padding: "6px 20px", background: "var(--accent-primary)", border: "none",
+    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
+    fontSize: 13, fontWeight: 600,
+  },
 };
 
 // ── Drawing selector ─────────────────────────────────────────────────────

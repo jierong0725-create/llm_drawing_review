@@ -1,5 +1,4 @@
 import os
-import tempfile
 import threading
 from datetime import datetime
 from typing import List
@@ -20,6 +19,7 @@ from ..services.reconciler import reconcile
 from ..services.image_gen import generate_drawing_images
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "drawings")
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "uploads")
 
 router = APIRouter(prefix="/parts", tags=["parts"])
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "../templates"))
@@ -123,8 +123,9 @@ def create_version(
     db.add(version)
     db.flush()
 
-    # Save uploaded files to temp dir; keep (drawing_id, path) pairs for background task
-    tmp_dir = tempfile.mkdtemp()
+    # Save uploaded files persistently for potential reprocessing
+    upload_dir = os.path.join(UPLOAD_DIR, str(version.id))
+    os.makedirs(upload_dir, exist_ok=True)
     drawing_paths: list[tuple[int, str]] = []
 
     for i, upload in enumerate(files, start=1):
@@ -132,10 +133,10 @@ def create_version(
         db.add(drawing)
         db.flush()
 
-        tmp_path = os.path.join(tmp_dir, f"{drawing.id}_{upload.filename}")
-        with open(tmp_path, "wb") as f:
+        saved_path = os.path.join(upload_dir, f"{drawing.id}_{upload.filename}")
+        with open(saved_path, "wb") as f:
             f.write(upload.file.read())
-        drawing_paths.append((drawing.id, tmp_path))
+        drawing_paths.append((drawing.id, saved_path))
 
     db.commit()
     version_id = version.id
@@ -148,10 +149,10 @@ def create_version(
     )
     thread.start()
 
-    db.refresh(part)
-    return templates.TemplateResponse(
-        request, "parts/detail.html", {"part": part}
-    )
+    return JSONResponse({
+        "version_id": version_id,
+        "redirect_url": f"/parts/{part_id}/versions/{version_id}/review",
+    }, status_code=201)
 
 
 def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> None:
@@ -184,24 +185,20 @@ def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> N
                 output_dir = os.path.join(STATIC_DIR, str(drawing_id))
                 try:
                     generate_drawing_images(drawing_id, pdf_path, output_dir)
-                except Exception:
-                    pass  # Non-fatal: image generation failure shouldn't block dimension extraction
+                except Exception as img_err:
+                    version = db.query(Version).filter(Version.id == version_id).first()
+                    if version:
+                        version.notes = (version.notes or "") + f"\n[图片生成失败] drawing {drawing_id}: {img_err}"
+                        db.commit()
             except Exception:
                 db.rollback()
                 raise
-            finally:
-                # Clean up temp file
-                try:
-                    os.remove(pdf_path)
-                except OSError:
-                    pass
 
         version = db.query(Version).filter(Version.id == version_id).first()
         if version:
             version.status = ProcessingStatus.ready
             db.commit()
     except Exception as exc:
-        # Mark version as failed (reuse pending to signal error without new enum value)
         try:
             version = db.query(Version).filter(Version.id == version_id).first()
             if version:
@@ -212,6 +209,39 @@ def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> N
             pass
     finally:
         db.close()
+
+
+@router.post("/{part_id}/versions/{version_id}/reprocess")
+def reprocess_images(part_id: int, version_id: int, db: Session = Depends(get_db)):
+    version = db.query(Version).filter(Version.id == version_id, Version.part_id == part_id).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="版本不存在")
+
+    upload_dir = os.path.join(UPLOAD_DIR, str(version_id))
+    regenerated = 0
+    errors = []
+
+    for drawing in version.drawings:
+        # Find the saved PDF for this drawing
+        pdf_candidates = [f for f in os.listdir(upload_dir) if f.startswith(f"{drawing.id}_")]
+        if not pdf_candidates:
+            errors.append(f"drawing {drawing.id}: PDF 文件未找到")
+            continue
+        pdf_path = os.path.join(upload_dir, pdf_candidates[0])
+        output_dir = os.path.join(STATIC_DIR, str(drawing.id))
+        try:
+            generate_drawing_images(drawing.id, pdf_path, output_dir)
+            regenerated += 1
+        except Exception as e:
+            errors.append(f"drawing {drawing.id}: {e}")
+
+    version.status = ProcessingStatus.ready
+    version.notes = (version.notes or "") + f"\n[重新渲染] {regenerated} 张成功"
+    if errors:
+        version.notes += f"\n错误: {'; '.join(errors)}"
+    db.commit()
+
+    return JSONResponse({"ok": True, "regenerated": regenerated, "errors": errors})
 
 
 @router.post("/{part_id}/versions/{version_id}/confirm", response_class=HTMLResponse)
