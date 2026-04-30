@@ -1,0 +1,272 @@
+{% extends "spa.html" %}
+{% block scripts %}
+<script type="text/babel" src="/static/jsx/app_shell.jsx"></script>
+<script type="text/babel" src="/static/jsx/status_dot.jsx"></script>
+<script type="text/babel" src="/static/jsx/data_table.jsx"></script>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+function SearchFilter({ search, onSearchChange, statusFilter, onStatusChange }) {
+  return React.createElement("div", { style: searchStyles.wrapper },
+    React.createElement("input", {
+      type: "text", placeholder: "搜索零件名称或图号...",
+      value: search, onChange: (e) => onSearchChange(e.target.value),
+      style: searchStyles.input,
+    }),
+    React.createElement("select", {
+      value: statusFilter, onChange: (e) => onStatusChange(e.target.value),
+      style: searchStyles.select,
+    },
+      React.createElement("option", { value: "all" }, "全部状态"),
+      React.createElement("option", { value: "ready" }, "就绪"),
+      React.createElement("option", { value: "processing" }, "处理中"),
+      React.createElement("option", { value: "pending" }, "待处理"),
+      React.createElement("option", { value: "confirmed" }, "已确认"),
+    )
+  );
+}
+
+const searchStyles = {
+  wrapper: { display: "flex", gap: "var(--space-12)", marginBottom: "var(--space-16)" },
+  input: {
+    flex: 1, padding: "6px 12px",
+    background: "var(--bg-surface)", border: "1px solid var(--border-color)",
+    borderRadius: "var(--radius)", color: "var(--ink)", fontSize: 13,
+    outline: "none",
+  },
+  select: {
+    padding: "6px 12px",
+    background: "var(--bg-surface)", border: "1px solid var(--border-color)",
+    borderRadius: "var(--radius)", color: "var(--ink)", fontSize: 13,
+    outline: "none", cursor: "pointer",
+  },
+};
+
+function NewPartModal({ isOpen, onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [drawingNumber, setDrawingNumber] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+    const formData = new FormData();
+    formData.append("name", name);
+    formData.append("drawing_number", drawingNumber);
+    try {
+      const resp = await fetch("/parts/api/create", { method: "POST", body: formData });
+      if (!resp.ok) {
+        const data = await resp.json();
+        throw new Error(data.detail || "创建失败");
+      }
+      const part = await resp.json();
+      onCreated(part);
+      setName(""); setDrawingNumber(""); onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return React.createElement("div", { style: modalStyles.overlay, onClick: onClose },
+    React.createElement("div", { style: modalStyles.dialog, onClick: (e) => e.stopPropagation() },
+      React.createElement("h2", { style: modalStyles.title }, "新增零件"),
+      React.createElement("form", { onSubmit: handleSubmit },
+        React.createElement("div", { style: modalStyles.field },
+          React.createElement("label", { style: modalStyles.label }, "零件名称"),
+          React.createElement("input", {
+            type: "text", value: name, onChange: (e) => setName(e.target.value),
+            style: modalStyles.input, placeholder: "例：发动机缸体", required: true,
+          })
+        ),
+        React.createElement("div", { style: modalStyles.field },
+          React.createElement("label", { style: modalStyles.label }, "图号"),
+          React.createElement("input", {
+            type: "text", value: drawingNumber, onChange: (e) => setDrawingNumber(e.target.value),
+            style: modalStyles.input, placeholder: "例：ENG-001-A", required: true,
+          })
+        ),
+        error && React.createElement("div", { style: modalStyles.error }, error),
+        React.createElement("div", { style: modalStyles.actions },
+          React.createElement("button", {
+            type: "button", onClick: onClose, style: modalStyles.cancelBtn,
+          }, "取消"),
+          React.createElement("button", {
+            type: "submit", disabled: submitting,
+            style: { ...modalStyles.submitBtn, opacity: submitting ? 0.5 : 1 },
+          }, submitting ? "创建中..." : "创建零件"),
+        )
+      )
+    )
+  );
+}
+
+const modalStyles = {
+  overlay: {
+    position: "fixed", inset: 0, zIndex: 100,
+    background: "rgba(0,0,0,0.6)", display: "flex",
+    alignItems: "center", justifyContent: "center",
+  },
+  dialog: {
+    background: "var(--bg-elevated)", borderRadius: "var(--radius)",
+    padding: "var(--space-24)", width: 420, maxWidth: "90vw",
+    border: "1px solid var(--border-color)",
+  },
+  title: {
+    fontSize: 15, fontWeight: 600, color: "var(--ink)",
+    marginBottom: "var(--space-16)", fontFamily: "var(--font-display)",
+  },
+  field: { marginBottom: "var(--space-12)" },
+  label: {
+    display: "block", fontSize: 11, color: "var(--ink-secondary)",
+    textTransform: "uppercase", letterSpacing: "0.05em",
+    marginBottom: "var(--space-4)",
+  },
+  input: {
+    width: "100%", padding: "6px 10px",
+    background: "var(--bg-surface)", border: "1px solid var(--border-color)",
+    borderRadius: "var(--radius)", color: "var(--ink)", fontSize: 13,
+    outline: "none", boxSizing: "border-box",
+  },
+  error: {
+    color: "var(--signal-red)", fontSize: 12, marginBottom: "var(--space-8)",
+  },
+  actions: { display: "flex", gap: "var(--space-8)", justifyContent: "flex-end", marginTop: "var(--space-16)" },
+  cancelBtn: {
+    padding: "6px 16px", background: "transparent", border: "1px solid var(--border-color)",
+    borderRadius: "var(--radius)", color: "var(--ink-secondary)", cursor: "pointer", fontSize: 13,
+  },
+  submitBtn: {
+    padding: "6px 16px", background: "var(--accent-primary)", border: "none",
+    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
+    fontSize: 13, fontWeight: 600,
+  },
+};
+
+function App() {
+  const [parts, setParts] = useState([]);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const fetchParts = () => {
+    fetch("/parts/api/list").then((r) => r.json()).then(setParts);
+  };
+
+  useEffect(() => { fetchParts(); }, []);
+
+  const filtered = parts.filter((p) => {
+    const q = search.toLowerCase();
+    const matchesSearch = !q || p.name.toLowerCase().includes(q) || p.drawing_number.toLowerCase().includes(q);
+    const v = p.current_version;
+    let matchesStatus = true;
+    if (statusFilter !== "all" && v) {
+      matchesStatus = v.status === statusFilter;
+    } else if (statusFilter !== "all" && !v) {
+      matchesStatus = statusFilter === "pending";
+    }
+    return matchesSearch && matchesStatus;
+  });
+
+  const handleRowClick = (row) => {
+    const v = row.current_version;
+    if (v) {
+      window.location.href = `/parts/${row.id}/versions/${v.id}/review`;
+    } else {
+      window.location.href = `/parts/${row.id}`;
+    }
+  };
+
+  const statusLabelMap = {
+    pending: "待处理", processing: "处理中", ready: "就绪", confirmed: "已确认",
+  };
+
+  const columns = [
+    { key: "drawing_number", label: "图号" },
+    { key: "name", label: "零件名称" },
+    {
+      key: "current_version",
+      label: "当前版本",
+      render: (v) => v ? React.createElement("span", {
+        style: { fontFamily: "var(--font-mono)", fontSize: 12 }
+      }, v.version_code) : React.createElement("span", { style: { color: "var(--ink-disabled)" } }, "—"),
+    },
+    {
+      key: "current_version",
+      label: "状态",
+      render: (v) => {
+        if (!v) return React.createElement("span", { style: { color: "var(--ink-disabled)" } }, "待上传");
+        const status = v.status;
+        const label = statusLabelMap[status] || status;
+        return React.createElement(window.StatusDot || "span", { status, label, pulse: status === "processing" });
+      },
+    },
+    {
+      key: "pending_count",
+      label: "待审/总计",
+      render: (val, row) => React.createElement("span", { style: { fontFamily: "var(--font-mono)" } },
+        `${val} / ${row.total_count}`),
+    },
+    {
+      key: "created_at",
+      label: "创建时间",
+      render: (val) => React.createElement("span", { style: { color: "var(--ink-secondary)", fontSize: 12 } }, val),
+    },
+  ];
+
+  return React.createElement("div", { style: pageStyles.wrapper },
+    React.createElement(window.AppShell, {
+      breadcrumbs: [{ label: "零件列表" }],
+    },
+      React.createElement("div", { style: pageStyles.content },
+        React.createElement("div", { style: pageStyles.header },
+          React.createElement("h1", { style: pageStyles.pageTitle }, "零件列表"),
+          React.createElement("button", {
+            onClick: () => setModalOpen(true),
+            style: pageStyles.addBtn,
+          }, "+ 新增零件"),
+        ),
+        React.createElement(SearchFilter, {
+          search, onSearchChange: setSearch,
+          statusFilter, onStatusChange: setStatusFilter,
+        }),
+        React.createElement(window.DataTable, {
+          columns, data: filtered, onRowClick: handleRowClick,
+          emptyText: "暂无零件，点击上方按钮新增",
+        }),
+      ),
+    ),
+    React.createElement(NewPartModal, {
+      isOpen: modalOpen, onClose: () => setModalOpen(false),
+      onCreated: () => fetchParts(),
+    }),
+  );
+}
+
+const pageStyles = {
+  wrapper: { height: "100%", display: "flex", flexDirection: "column" },
+  content: { flex: 1, padding: "var(--space-24)", overflow: "auto" },
+  header: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    marginBottom: "var(--space-16)",
+  },
+  pageTitle: {
+    fontSize: 18, fontWeight: 600, fontFamily: "var(--font-display)",
+    color: "var(--ink)", letterSpacing: "0.02em",
+  },
+  addBtn: {
+    padding: "6px 16px", background: "var(--accent-primary)", border: "none",
+    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
+    fontSize: 13, fontWeight: 600,
+  },
+};
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+</script>
+{% endblock %}

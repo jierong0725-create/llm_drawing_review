@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Form, UploadFile, File
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -17,20 +17,62 @@ from ..models import (
 from ..services.extractor import extract_from_pdf
 from ..services.vision import vision_check
 from ..services.reconciler import reconcile
+from ..services.image_gen import generate_drawing_images
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "drawings")
 
 router = APIRouter(prefix="/parts", tags=["parts"])
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "../templates"))
 
 
+def _get_current_version_info(part):
+    """Helper: return current version status info for a part."""
+    current = next((v for v in part.versions if v.is_current), None)
+    if not current:
+        return None
+    return {
+        "id": current.id,
+        "version_code": current.version_code,
+        "status": current.status.value,
+        "confirm_result": current.confirm_result.value if current.confirm_result else None,
+    }
+
+def _get_pending_count(part):
+    """Helper: count pending dimensions across all drawings."""
+    count = 0
+    for version in part.versions:
+        for drawing in version.drawings:
+            count += sum(1 for d in drawing.dimensions if d.review_status and d.review_status.value == "pending")
+    return count
+
+def _get_total_dimension_count(part):
+    """Helper: total dimension count across all drawings."""
+    count = 0
+    for version in part.versions:
+        for drawing in version.drawings:
+            count += len(drawing.dimensions)
+    return count
+
+
 @router.get("/", response_class=HTMLResponse)
 def list_parts(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(request, "parts_list.html", {"title": "零件列表"})
+
+
+@router.get("/api/list")
+def list_parts_json(db: Session = Depends(get_db)):
     parts = db.query(Part).order_by(Part.created_at.desc()).all()
-    return templates.TemplateResponse("parts/list.html", {"request": request, "parts": parts})
+    return [{
+        "id": p.id, "name": p.name, "drawing_number": p.drawing_number,
+        "current_version": _get_current_version_info(p),
+        "pending_count": _get_pending_count(p),
+        "total_count": _get_total_dimension_count(p),
+        "created_at": p.created_at.strftime("%Y-%m-%d %H:%M") if p.created_at else None,
+    } for p in parts]
 
 
-@router.post("/", response_class=HTMLResponse)
-def create_part(
-    request: Request,
+@router.post("/api/create")
+def create_part_json(
     name: str = Form(...),
     drawing_number: str = Form(...),
     db: Session = Depends(get_db),
@@ -42,8 +84,9 @@ def create_part(
     db.add(part)
     db.commit()
     db.refresh(part)
-    parts = db.query(Part).order_by(Part.created_at.desc()).all()
-    return templates.TemplateResponse("parts/list.html", {"request": request, "parts": parts})
+    return JSONResponse({
+        "id": part.id, "name": part.name, "drawing_number": part.drawing_number,
+    }, status_code=201)
 
 
 @router.get("/{part_id}", response_class=HTMLResponse)
@@ -51,7 +94,7 @@ def part_detail(request: Request, part_id: int, db: Session = Depends(get_db)):
     part = db.query(Part).filter(Part.id == part_id).first()
     if not part:
         raise HTTPException(status_code=404, detail="零件不存在")
-    return templates.TemplateResponse("parts/detail.html", {"request": request, "part": part})
+    return templates.TemplateResponse(request, "parts/detail.html", {"part": part})
 
 
 @router.post("/{part_id}/versions", response_class=HTMLResponse)
@@ -104,7 +147,7 @@ def create_version(
 
     db.refresh(part)
     return templates.TemplateResponse(
-        "parts/detail.html", {"request": request, "part": part}
+        request, "parts/detail.html", {"part": part}
     )
 
 
@@ -133,6 +176,13 @@ def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> N
                     )
                     db.add(record)
                 db.commit()
+
+                # Generate JPG images for web review
+                output_dir = os.path.join(STATIC_DIR, str(drawing_id))
+                try:
+                    generate_drawing_images(drawing_id, pdf_path, output_dir)
+                except Exception:
+                    pass  # Non-fatal: image generation failure shouldn't block dimension extraction
             except Exception:
                 db.rollback()
                 raise
@@ -183,4 +233,4 @@ def confirm_version(
     db.commit()
 
     part = db.query(Part).filter(Part.id == part_id).first()
-    return templates.TemplateResponse("parts/detail.html", {"request": request, "part": part})
+    return templates.TemplateResponse(request, "parts/detail.html", {"part": part})
