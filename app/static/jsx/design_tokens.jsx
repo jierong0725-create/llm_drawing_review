@@ -72,6 +72,12 @@ const designTokens = `
     font-variant-numeric: tabular-nums;
   }
   table.industrial tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+  /* 动画 */
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
 `;
 
 // Inject into document head
