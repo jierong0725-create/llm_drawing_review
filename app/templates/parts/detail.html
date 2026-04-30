@@ -48,14 +48,51 @@
       <span class="text-xs text-gray-400">{{ version.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
     </div>
 
-    <!-- 图纸文件列表 -->
-    <div class="text-sm text-gray-600 mb-3 space-y-1">
+    <!-- 图纸文件列表 + 尺寸展开 -->
+    <div class="text-sm text-gray-600 mb-3 space-y-2">
       {% for drawing in version.drawings %}
-      <div class="flex items-center gap-2">
-        <span class="text-gray-400">第{{ drawing.sequence }}张</span>
-        <span>{{ drawing.filename }}</span>
-        <span class="text-gray-400">·</span>
-        <span class="text-gray-400">{{ drawing.dimensions | length }} 条尺寸</span>
+      <div>
+        <button type="button"
+          onclick="document.getElementById('dims-{{ drawing.id }}').classList.toggle('hidden')"
+          class="flex items-center gap-2 hover:text-blue-600 w-full text-left">
+          <span class="text-gray-400">第{{ drawing.sequence }}张</span>
+          <span>{{ drawing.filename }}</span>
+          <span class="text-gray-400">·</span>
+          <span class="text-blue-500">{{ drawing.dimensions | length }} 条尺寸</span>
+          <span class="text-gray-400 ml-auto text-xs">▼</span>
+        </button>
+        {% if drawing.dimensions %}
+        <div id="dims-{{ drawing.id }}" class="hidden mt-2 overflow-x-auto">
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="border border-gray-200 px-2 py-1 text-left w-8">#</th>
+                <th class="border border-gray-200 px-2 py-1 text-left">尺寸值</th>
+                <th class="border border-gray-200 px-2 py-1 text-left">类型</th>
+                <th class="border border-gray-200 px-2 py-1 text-left">公差</th>
+                <th class="border border-gray-200 px-2 py-1 text-left">来源</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for dim in drawing.dimensions %}
+              <tr class="{% if dim.source.value == 'llm' %}bg-yellow-50{% endif %}">
+                <td class="border border-gray-200 px-2 py-1">{{ dim.sequence }}</td>
+                <td class="border border-gray-200 px-2 py-1 font-mono">{{ dim.value }}</td>
+                <td class="border border-gray-200 px-2 py-1">{{ dim.dim_type.value }}</td>
+                <td class="border border-gray-200 px-2 py-1 font-mono">{{ dim.tolerance or "—" }}</td>
+                <td class="border border-gray-200 px-2 py-1">
+                  {% if dim.source.value == "llm" %}
+                    <span class="text-yellow-600">LLM</span>
+                  {% else %}
+                    <span class="text-gray-500">程序</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
