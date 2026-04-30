@@ -276,6 +276,347 @@ const versionSelectStyles = {
   },
 };
 
+// ── DimensionList ────────────────────────────────────────────────────────
+function DimensionList({ dims, selectedDimId, onSelect, filter, onFilterChange }) {
+  const statusLabels = { pending: "待审", confirmed: "确认", questionable: "存疑" };
+  const filterOptions = ["all", "pending", "confirmed", "questionable"];
+
+  const filtered = filter === "all" ? dims : dims.filter((d) => d.review_status === filter);
+
+  return React.createElement("div", { style: dimListStyles.wrapper },
+    React.createElement("div", { style: dimListStyles.filterBar },
+      filterOptions.map((opt) =>
+        React.createElement("button", {
+          key: opt,
+          onClick: () => onFilterChange(opt),
+          style: {
+            ...dimListStyles.filterBtn,
+            color: filter === opt ? "var(--accent-primary)" : "var(--ink-secondary)",
+            borderBottomColor: filter === opt ? "var(--accent-primary)" : "transparent",
+          },
+        }, opt === "all" ? "全部" : statusLabels[opt])
+      ),
+      React.createElement("span", { style: dimListStyles.count }, `${filtered.length}/${dims.length}`),
+    ),
+    React.createElement("div", { style: dimListStyles.list },
+      filtered.length === 0
+        ? React.createElement("div", { style: dimListStyles.empty }, "暂无标注")
+        : filtered.map((d) =>
+            React.createElement("div", {
+              key: d.id,
+              onClick: () => onSelect(d.id),
+              style: { ...dimListStyles.item, background: d.id === selectedDimId ? "rgba(240,165,0,0.08)" : "transparent" },
+            },
+              React.createElement("span", { style: dimListStyles.seq }, String(d.sequence).padStart(2, "0")),
+              React.createElement("span", { style: dimListStyles.value }, d.value),
+              React.createElement(StatusDot, { status: d.review_status }),
+              d.message_count > 0 && React.createElement("span", { style: dimListStyles.badge }, d.message_count),
+            )
+          )
+    ),
+  );
+}
+
+const dimListStyles = {
+  wrapper: {},
+  filterBar: {
+    display: "flex", gap: 1, padding: "0 var(--space-12)",
+    borderBottom: "1px solid var(--border-color)", alignItems: "center",
+  },
+  filterBtn: {
+    padding: "6px 10px", background: "transparent", border: "none",
+    borderBottom: "2px solid transparent", cursor: "pointer", fontSize: 12,
+  },
+  count: { marginLeft: "auto", fontSize: 11, color: "var(--ink-disabled)", fontFamily: "var(--font-mono)" },
+  list: { maxHeight: 240, overflowY: "auto" },
+  empty: { padding: 24, textAlign: "center", color: "var(--ink-disabled)", fontSize: 12 },
+  item: {
+    display: "flex", alignItems: "center", gap: "var(--space-8)",
+    padding: "6px var(--space-12)", cursor: "pointer",
+    borderBottom: "1px solid rgba(58,63,74,0.4)", fontSize: 13,
+  },
+  seq: {
+    fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 700,
+    color: "var(--ink-disabled)", minWidth: 22,
+  },
+  value: {
+    fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--ink)", flex: 1,
+  },
+  badge: {
+    fontSize: 10, background: "var(--accent-primary)", color: "#1e2127",
+    borderRadius: 2, minWidth: 16, height: 16,
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+    fontWeight: 600,
+  },
+};
+
+// ── DimensionDetail ──────────────────────────────────────────────────────
+function DimensionDetail({ dim, readOnly, onStatusChange }) {
+  if (!dim) {
+    return React.createElement("div", { style: { padding: "var(--space-16)", color: "var(--ink-disabled)", fontSize: 12, textAlign: "center" } }, "选择一个标注");
+  }
+
+  const statuses = [
+    { value: "pending", label: "待审" },
+    { value: "confirmed", label: "确认" },
+    { value: "questionable", label: "存疑" },
+  ];
+
+  return React.createElement("div", { style: ddStyles.wrapper },
+    React.createElement("div", { style: ddStyles.header },
+      React.createElement("span", { style: ddStyles.seq }, `#${String(dim.sequence).padStart(2, "0")}`),
+      React.createElement("span", { style: ddStyles.value }, dim.value),
+    ),
+    React.createElement("div", { style: ddStyles.grid },
+      React.createElement(DDField, { label: "类型", value: dim.dim_type }),
+      React.createElement(DDField, { label: "来源", value: dim.source }),
+      React.createElement(DDField, { label: "视图", value: dim.view_name || "—" }),
+      React.createElement(DDField, { label: "坐标", value: dim.anchor_x ? `${Math.round(dim.anchor_x)}, ${Math.round(dim.anchor_y)}` : "—" }),
+    ),
+    !readOnly && React.createElement("div", { style: ddStyles.statusRow },
+      React.createElement("span", { style: { fontSize: 11, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" } }, "状态"),
+      React.createElement("div", { style: ddStyles.statusBtns },
+        statuses.map((s) =>
+          React.createElement("button", {
+            key: s.value,
+            onClick: () => onStatusChange(dim.id, s.value),
+            style: {
+              ...ddStyles.statusBtn,
+              background: dim.review_status === s.value ? "var(--accent-primary)" : "transparent",
+              color: dim.review_status === s.value ? "#1e2127" : "var(--ink-secondary)",
+              borderColor: dim.review_status === s.value ? "var(--accent-primary)" : "var(--border-color)",
+            },
+          }, s.label)
+        )
+      ),
+    ),
+  );
+}
+
+function DDField({ label, value }) {
+  return React.createElement("div", null,
+    React.createElement("div", { style: ddStyles.fieldLabel }, label),
+    React.createElement("div", { style: ddStyles.fieldValue }, value),
+  );
+}
+
+const ddStyles = {
+  wrapper: { padding: "var(--space-16)", borderBottom: "1px solid var(--border-color)" },
+  header: { display: "flex", alignItems: "baseline", gap: "var(--space-8)", marginBottom: "var(--space-12)" },
+  seq: { fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-disabled)" },
+  value: { fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 600, color: "var(--ink)" },
+  grid: {
+    display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-8)",
+    marginBottom: "var(--space-12)",
+  },
+  fieldLabel: { fontSize: 10, color: "var(--ink-disabled)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 },
+  fieldValue: { fontSize: 12, color: "var(--ink)", fontFamily: "var(--font-mono)" },
+  statusRow: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+  statusBtns: { display: "flex", gap: 4 },
+  statusBtn: {
+    padding: "3px 10px", border: "1px solid", borderRadius: "var(--radius)",
+    cursor: "pointer", fontSize: 11, fontWeight: 600,
+  },
+};
+
+// ── DiscussionThread ─────────────────────────────────────────────────────
+function DiscussionThread({ dimId, readOnly }) {
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!dimId) { setMessages([]); return; }
+    fetch(`/api/dimensions/${dimId}/messages`)
+      .then((r) => r.json())
+      .then(setMessages);
+  }, [dimId]);
+
+  const handleSend = async () => {
+    if (!text.trim() || sending) return;
+    setSending(true);
+    try {
+      const resp = await fetch(`/api/dimensions/${dimId}/messages`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author: "审核员", content: text.trim() }),
+      });
+      if (resp.ok) {
+        const msg = await resp.json();
+        setMessages((prev) => [...prev, msg]);
+        setText("");
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  return React.createElement("div", { style: discStyles.wrapper },
+    React.createElement("div", { style: discStyles.messages },
+      messages.length === 0
+        ? React.createElement("div", { style: { color: "var(--ink-disabled)", fontSize: 12, textAlign: "center", padding: 16 } }, "暂无讨论")
+        : messages.map((m) =>
+            React.createElement("div", { key: m.id, style: discStyles.bubble },
+              React.createElement("div", { style: discStyles.meta },
+                React.createElement("span", { style: discStyles.author }, m.author),
+                React.createElement("span", { style: discStyles.time }, m.created_at),
+              ),
+              React.createElement("div", { style: discStyles.content }, m.content),
+            )
+          )
+    ),
+    !readOnly && React.createElement("div", { style: discStyles.inputRow },
+      React.createElement("input", {
+        type: "text", placeholder: "输入讨论内容...",
+        value: text, onChange: (e) => setText(e.target.value),
+        onKeyDown: handleKeyDown, style: discStyles.input,
+      }),
+      React.createElement("button", {
+        onClick: handleSend, disabled: sending || !text.trim(),
+        style: { ...discStyles.sendBtn, opacity: sending || !text.trim() ? 0.5 : 1 },
+      }, "发送"),
+    ),
+  );
+}
+
+const discStyles = {
+  wrapper: { borderBottom: "1px solid var(--border-color)" },
+  messages: { padding: "var(--space-12)", maxHeight: 200, overflowY: "auto" },
+  bubble: {
+    background: "var(--bg-elevated)", borderRadius: "var(--radius)",
+    padding: "var(--space-8) var(--space-12)", marginBottom: "var(--space-8)",
+  },
+  meta: {
+    display: "flex", justifyContent: "space-between", marginBottom: 4,
+  },
+  author: { fontSize: 11, fontWeight: 600, color: "var(--accent-primary)" },
+  time: { fontSize: 10, color: "var(--ink-disabled)" },
+  content: { fontSize: 12, color: "var(--ink)", lineHeight: 1.5 },
+  inputRow: {
+    display: "flex", gap: "var(--space-8)", padding: "var(--space-8) var(--space-12)",
+    borderTop: "1px solid var(--border-color)",
+  },
+  input: {
+    flex: 1, padding: "5px 10px", background: "var(--bg-canvas)",
+    border: "1px solid var(--border-color)", borderRadius: "var(--radius)",
+    color: "var(--ink)", fontSize: 12, outline: "none",
+  },
+  sendBtn: {
+    padding: "5px 14px", background: "var(--accent-primary)", border: "none",
+    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
+    fontSize: 12, fontWeight: 600,
+  },
+};
+
+// ── ConclusionBar ────────────────────────────────────────────────────────
+function ConclusionBar({ dims, versionInfo, readOnly, onConfirm }) {
+  const counts = useMemo(() => ({
+    total: dims.length,
+    pending: dims.filter((d) => d.review_status === "pending").length,
+    confirmed: dims.filter((d) => d.review_status === "confirmed").length,
+    questionable: dims.filter((d) => d.review_status === "questionable").length,
+  }), [dims]);
+
+  const [notes, setNotes] = useState(versionInfo?.notes || "");
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null);
+
+  const handleConfirm = () => {
+    onConfirm(confirmAction, notes);
+    setShowConfirm(false);
+  };
+
+  if (versionInfo?.confirm_result && readOnly) {
+    const date = versionInfo.confirmed_at || "";
+    return React.createElement("div", { style: cbStyles.wrapper },
+      React.createElement("div", { style: cbStyles.stampArea },
+        React.createElement(Stamp, { type: versionInfo.confirm_result, date }),
+      ),
+    );
+  }
+
+  return React.createElement("div", { style: cbStyles.wrapper },
+    React.createElement("div", { style: cbStyles.stats },
+      React.createElement("span", { style: cbStyles.stat }, `共 ${counts.total} 条`),
+      React.createElement("span", { style: { ...cbStyles.stat, color: "var(--ink-disabled)" } }, `待审 ${counts.pending}`),
+      React.createElement("span", { style: { ...cbStyles.stat, color: "var(--signal-green)" } }, `确认 ${counts.confirmed}`),
+      React.createElement("span", { style: { ...cbStyles.stat, color: "var(--signal-amber)" } }, `存疑 ${counts.questionable}`),
+    ),
+    !readOnly && React.createElement("div", null,
+      React.createElement("textarea", {
+        placeholder: "审核备注...", value: notes,
+        onChange: (e) => setNotes(e.target.value),
+        style: cbStyles.notes,
+        rows: 2,
+      }),
+      React.createElement("div", { style: cbStyles.actions },
+        React.createElement("button", {
+          onClick: () => { setConfirmAction("approved"); setShowConfirm(true); },
+          style: { ...cbStyles.btn, background: "var(--signal-green)", color: "#fff" },
+        }, "✓ 通过"),
+        React.createElement("button", {
+          onClick: () => { setConfirmAction("rejected"); setShowConfirm(true); },
+          style: { ...cbStyles.btn, background: "var(--signal-red)", color: "#fff" },
+        }, "✕ 驳回"),
+      ),
+    ),
+    showConfirm && React.createElement("div", { style: cbStyles.overlay, onClick: () => setShowConfirm(false) },
+      React.createElement("div", { style: cbStyles.dialog, onClick: (e) => e.stopPropagation() },
+        React.createElement("div", { style: { fontSize: 14, marginBottom: 12, color: "var(--ink)" } },
+          `确认${confirmAction === "approved" ? "通过" : "驳回"}此版本？`
+        ),
+        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-secondary)", marginBottom: 16 } },
+          `待审标注 ${counts.pending} 条，${confirmAction === "approved" ? "通过后标注状态将被锁定" : "驳回后版本将被标记为不合格"}.`
+        ),
+        React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          React.createElement("button", { onClick: () => setShowConfirm(false), style: cbStyles.cancelBtn }, "取消"),
+          React.createElement("button", { onClick: handleConfirm, style: { ...cbStyles.btn, background: "var(--accent-primary)", color: "#1e2127" } }, "确认提交"),
+        ),
+      ),
+    ),
+  );
+}
+
+const cbStyles = {
+  wrapper: { borderTop: "1px solid var(--border-color)" },
+  stampArea: { display: "flex", justifyContent: "center", padding: "var(--space-24)" },
+  stats: {
+    display: "flex", gap: "var(--space-12)", padding: "var(--space-8) var(--space-16)",
+    borderBottom: "1px solid var(--border-color)", fontSize: 11,
+    fontFamily: "var(--font-mono)",
+  },
+  stat: { color: "var(--ink-secondary)" },
+  notes: {
+    width: "100%", padding: "6px 10px", background: "var(--bg-canvas)",
+    border: "1px solid var(--border-color)", borderRadius: "var(--radius)",
+    color: "var(--ink)", fontSize: 12, outline: "none", resize: "vertical",
+    boxSizing: "border-box", margin: "var(--space-8) var(--space-12)",
+    width: "calc(100% - 24px)",
+  },
+  actions: {
+    display: "flex", gap: "var(--space-8)", padding: "0 var(--space-12) var(--space-12)",
+  },
+  btn: {
+    flex: 1, padding: "6px 0", border: "none", borderRadius: "var(--radius)",
+    cursor: "pointer", fontSize: 13, fontWeight: 600,
+  },
+  cancelBtn: {
+    padding: "6px 16px", background: "transparent", border: "1px solid var(--border-color)",
+    borderRadius: "var(--radius)", color: "var(--ink-secondary)", cursor: "pointer", fontSize: 12,
+  },
+  overlay: {
+    position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.6)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+  },
+  dialog: {
+    background: "var(--bg-elevated)", borderRadius: "var(--radius)",
+    padding: "var(--space-24)", width: 360, border: "1px solid var(--border-color)",
+  },
+};
+
 // ── App ──────────────────────────────────────────────────────────────────
 function App() {
   const [versions, setVersions] = useState([]);
@@ -285,6 +626,8 @@ function App() {
   const [dims, setDims] = useState([]);
   const [selectedDimId, setSelectedDimId] = useState(null);
   const [versionInfo, setVersionInfo] = useState(null);
+  const [dimFilter, setDimFilter] = useState("all");
+  const [stampAnim, setStampAnim] = useState(false);
 
   // Fetch versions
   useEffect(() => {
@@ -321,12 +664,33 @@ function App() {
     setCurrentVersionId(vid);
     setActiveDrawingId(null);
     setSelectedDimId(null);
+    setDimFilter("all");
     window.history.replaceState(null, "", `/parts/${partId}/versions/${vid}/review`);
     const cv = versions.find((v) => v.id === vid);
     if (cv) setVersionInfo(cv);
   };
 
+  const handleStatusChange = async (dimId, newStatus) => {
+    await fetch(`/api/dimensions/${dimId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_status: newStatus }),
+    });
+    setDims((prev) => prev.map((d) => d.id === dimId ? { ...d, review_status: newStatus } : d));
+  };
+
+  const handleConfirm = async (result, notes) => {
+    await fetch(`/api/versions/${currentVersionId}/conclusion`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result, notes }),
+    });
+    setVersionInfo((prev) => prev ? { ...prev, confirm_result: result, status: "confirmed", notes } : prev);
+    setStampAnim(true);
+    setTimeout(() => setStampAnim(false), 600);
+  };
+
   const activeDrawing = drawings.find((d) => d.id === activeDrawingId);
+  const selectedDim = dims.find((d) => d.id === selectedDimId);
+  const isReadOnly = versionInfo?.confirm_result != null && !versionInfo?.is_current;
 
   return React.createElement("div", { style: appStyles.wrapper },
     React.createElement(AppShell, {
@@ -341,7 +705,7 @@ function App() {
           versions, currentVersionId,
           onChange: handleVersionChange,
         }),
-        versionInfo && React.createElement(StatusDot, { status: versionInfo.status, label: versionInfo.status }),
+        versionInfo && React.createElement(StatusDot, { status: versionInfo.status, label: versionInfo.status, pulse: versionInfo.status === "processing" }),
       ),
       React.createElement("div", { style: appStyles.body },
         React.createElement("div", { style: appStyles.canvasArea },
@@ -354,9 +718,24 @@ function App() {
           }),
         ),
         React.createElement("div", { style: appStyles.panel },
-          React.createElement("div", { style: { padding: "var(--space-24)", color: "var(--ink-secondary)", fontSize: 13 } },
-            "选择标注查看详情"
-          ),
+          React.createElement(DimensionList, {
+            dims, selectedDimId, onSelect: setSelectedDimId,
+            filter: dimFilter, onFilterChange: setDimFilter,
+          }),
+          React.createElement(DimensionDetail, {
+            dim: selectedDim,
+            readOnly: isReadOnly || !!versionInfo?.confirm_result,
+            onStatusChange: handleStatusChange,
+          }),
+          selectedDimId && React.createElement(DiscussionThread, {
+            dimId: selectedDimId,
+            readOnly: isReadOnly || !!versionInfo?.confirm_result,
+          }),
+          React.createElement(ConclusionBar, {
+            dims, versionInfo,
+            readOnly: isReadOnly,
+            onConfirm: handleConfirm,
+          }),
         ),
       ),
     ),
@@ -375,6 +754,7 @@ const appStyles = {
   panel: {
     width: 340, minWidth: 280, background: "var(--bg-surface)",
     borderLeft: "1px solid var(--border-color)", overflowY: "auto",
+    display: "flex", flexDirection: "column",
   },
 };
 
