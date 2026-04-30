@@ -33,6 +33,12 @@ class DimensionSource(str, enum.Enum):
     llm = "llm"                # Claude Vision 补充
 
 
+class ReviewStatus(str, enum.Enum):
+    pending = "pending"
+    confirmed = "confirmed"
+    questionable = "questionable"
+
+
 class Part(Base):
     __tablename__ = "parts"
 
@@ -91,5 +97,19 @@ class Dimension(Base):
     # 在标注 JPG 中的坐标（像素）
     anchor_x = Column(Float, nullable=True)
     anchor_y = Column(Float, nullable=True)
+    review_status = Column(Enum(ReviewStatus), default=ReviewStatus.pending)
 
     drawing = relationship("Drawing", back_populates="dimensions")
+    messages = relationship("ReviewMessage", back_populates="dimension", order_by="ReviewMessage.created_at")
+
+
+class ReviewMessage(Base):
+    __tablename__ = "review_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dimension_id = Column(Integer, ForeignKey("dimensions.id"), nullable=False)
+    author = Column(String(100), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    dimension = relationship("Dimension", back_populates="messages")
