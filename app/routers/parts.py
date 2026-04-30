@@ -93,8 +93,11 @@ def create_part_json(
 def part_detail(request: Request, part_id: int, db: Session = Depends(get_db)):
     part = db.query(Part).filter(Part.id == part_id).first()
     if not part:
-        raise HTTPException(status_code=404, detail="零件不存在")
-    return templates.TemplateResponse(request, "parts/detail.html", {"part": part})
+        raise HTTPException(status_code=404)
+    current = next((v for v in part.versions if v.is_current), None)
+    if current:
+        return RedirectResponse(url=f"/parts/{part_id}/versions/{current.id}/review")
+    return RedirectResponse(url="/parts/")
 
 
 @router.post("/{part_id}/versions", response_class=HTMLResponse)
