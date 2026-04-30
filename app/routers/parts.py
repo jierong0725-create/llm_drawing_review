@@ -265,5 +265,4 @@ def confirm_version(
     version.confirmed_at = datetime.utcnow()
     db.commit()
 
-    part = db.query(Part).filter(Part.id == part_id).first()
-    return templates.TemplateResponse(request, "parts/detail.html", {"part": part})
+    return RedirectResponse(url=f"/parts/{part_id}/versions/{version_id}/review", status_code=303)
