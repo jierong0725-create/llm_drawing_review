@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}工程图纸审核系统{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+
+  <nav class="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-6">
+    <span class="font-semibold text-gray-800">工程图纸审核</span>
+    <a href="/parts/" class="text-sm text-blue-600 hover:underline">零件列表</a>
+  </nav>
+
+  <main class="max-w-5xl mx-auto px-6 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+</body>
+</html>
