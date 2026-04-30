@@ -1,0 +1,384 @@
+{% extends "spa.html" %}
+{% block scripts %}
+<script type="text/babel" src="/static/jsx/marker_label.jsx"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ── URL helpers ──────────────────────────────────────────────────────────
+const pathParts = window.location.pathname.split("/");
+const partId = Number(pathParts[2]);
+const versionId = Number(pathParts[4]);
+
+// ── usePanZoom hook ──────────────────────────────────────────────────────
+function usePanZoom(containerRef) {
+  const [zoom, setZoom] = useState(0.85);
+  const [offsetX, setOffsetX] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
+  const isPanning = useRef(false);
+  const lastMouse = useRef({ x: 0, y: 0 });
+
+  const fitScreen = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const img = container.querySelector("img");
+    if (!img || !img.complete || !img.naturalWidth) {
+      setZoom(1); setOffsetX(0); setOffsetY(0);
+      return;
+    }
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const scale = Math.min(cw / img.naturalWidth, ch / img.naturalHeight, 1.5);
+    setZoom(scale);
+    setOffsetX((cw - img.naturalWidth * scale) / 2);
+    setOffsetY((ch - img.naturalHeight * scale) / 2);
+  }, [containerRef]);
+
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setZoom((z) => {
+      const newZoom = Math.min(8, Math.max(0.1, z * delta));
+      const rect = containerRef.current.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      setOffsetX((ox) => mx - (mx - ox) * (newZoom / z));
+      setOffsetY((oy) => my - (my - oy) * (newZoom / z));
+      return newZoom;
+    });
+  }, [containerRef]);
+
+  const handleMouseDown = useCallback((e) => {
+    if (e.target.tagName === "IMG" || e.target === containerRef.current) {
+      isPanning.current = true;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+    }
+  }, [containerRef]);
+
+  const handleMouseMove = useCallback((e) => {
+    if (!isPanning.current) return;
+    const dx = e.clientX - lastMouse.current.x;
+    const dy = e.clientY - lastMouse.current.y;
+    lastMouse.current = { x: e.clientX, y: e.clientY };
+    setOffsetX((ox) => ox + dx);
+    setOffsetY((oy) => oy + dy);
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    isPanning.current = false;
+  }, []);
+
+  const handleDblClick = useCallback(() => {
+    fitScreen();
+  }, [fitScreen]);
+
+  return { zoom, offsetX, setOffsetX, setOffsetY, fitScreen, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, handleDblClick };
+}
+
+// ── Repulsion algorithm ──────────────────────────────────────────────────
+function applyRepulsion(dims, zoom, minGapPx) {
+  const gap = minGapPx || 28;
+  const adjusted = dims.map((d, i) => ({ ...d, _gx: 0, _gy: 0, _idx: i }));
+  const threshold = gap / Math.max(zoom, 0.1);
+
+  for (let iter = 0; iter < 10; iter++) {
+    let moved = false;
+    for (let i = 0; i < adjusted.length; i++) {
+      for (let j = i + 1; j < adjusted.length; j++) {
+        const dx = (adjusted[i].anchor_x + adjusted[i]._gx) - (adjusted[j].anchor_x + adjusted[j]._gx);
+        const dy = (adjusted[i].anchor_y + adjusted[i]._gy) - (adjusted[j].anchor_y + adjusted[j]._gy);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < threshold && dist > 0.01) {
+          const push = (threshold - dist) / dist * 0.5;
+          const px = dx * push;
+          const py = dy * push;
+          adjusted[i]._gx += px;
+          adjusted[i]._gy += py;
+          adjusted[j]._gx -= px;
+          adjusted[j]._gy -= py;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return adjusted;
+}
+
+// ── DrawingCanvas component ──────────────────────────────────────────────
+function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim }) {
+  const containerRef = useRef(null);
+  const { zoom, offsetX, offsetY, fitScreen, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, handleDblClick } = usePanZoom(containerRef);
+  const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    fitScreen();
+  }, [drawing?.id]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
+
+  const showGuides = zoom < 0.5;
+  const adjustedDims = useMemo(() =>
+    showGuides ? applyRepulsion(dims, zoom, 28) : dims.map((d, i) => ({ ...d, _gx: 0, _gy: 0, _idx: i })),
+    [dims, zoom, showGuides]
+  );
+
+  const imgSrc = drawing ? `/static/drawings/${drawing.id}/page_1.jpg` : null;
+
+  return React.createElement("div", {
+    ref: containerRef,
+    onMouseDown: handleMouseDown, onMouseMove: handleMouseMove, onMouseUp: handleMouseUp,
+    onMouseLeave: handleMouseUp, onDoubleClick: handleDblClick,
+    style: canvasStyles.container,
+  },
+    // Toolbar
+    React.createElement("div", { style: canvasStyles.toolbar },
+      React.createElement("span", { style: canvasStyles.zoomLabel }, `${Math.round(zoom * 100)}%`),
+      React.createElement("button", { onClick: fitScreen, style: canvasStyles.toolbarBtn, title: "适应窗口" }, "⊞"),
+    ),
+    // Image or fallback
+    imageError
+      ? React.createElement("div", { style: canvasStyles.fallback },
+          React.createElement("div", { style: canvasStyles.fallbackIcon }, "📐"),
+          React.createElement("div", { style: canvasStyles.fallbackText }, "图纸图片未生成"),
+          React.createElement("div", { style: canvasStyles.fallbackHint }, "请重新上传版本以生成预览图"),
+        )
+      : imgSrc && React.createElement("img", {
+          src: imgSrc,
+          onError: () => setImageError(true),
+          style: {
+            ...canvasStyles.image,
+            transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
+            transformOrigin: "0 0",
+          },
+          draggable: false,
+        }),
+    // SVG guide lines
+    showGuides && React.createElement("svg", { style: canvasStyles.svgOverlay },
+      adjustedDims.filter((d) => Math.abs(d._gx) > 1 || Math.abs(d._gy) > 1).map((d) => {
+        const sx = (d.anchor_x + d._gx) * zoom + offsetX;
+        const sy = (d.anchor_y + d._gy) * zoom + offsetY;
+        const ex = d.anchor_x * zoom + offsetX;
+        const ey = d.anchor_y * zoom + offsetY;
+        return React.createElement("line", {
+          key: `guide-${d.id}`,
+          x1: sx, y1: sy, x2: ex, y2: ey,
+          stroke: "var(--ink-disabled)", strokeWidth: 1,
+          strokeDasharray: "3 3", opacity: 0.5,
+        });
+      })
+    ),
+    // Marker labels
+    adjustedDims.map((d) =>
+      React.createElement(MarkerLabel, {
+        key: d.id,
+        dim: { ...d, anchor_x: d.anchor_x + d._gx, anchor_y: d.anchor_y + d._gy },
+        zoom, offsetX, offsetY,
+        isSelected: d.id === selectedDimId,
+        onClick: onSelectDim,
+      })
+    ),
+  );
+}
+
+const canvasStyles = {
+  container: {
+    flex: 1, position: "relative", overflow: "hidden",
+    background: "var(--bg-canvas)", cursor: "grab",
+  },
+  toolbar: {
+    position: "absolute", top: 8, right: 8, zIndex: 30,
+    display: "flex", alignItems: "center", gap: "var(--space-8)",
+    background: "rgba(30,33,39,0.9)", border: "1px solid var(--border-color)",
+    borderRadius: "var(--radius)", padding: "4px 8px",
+  },
+  zoomLabel: {
+    fontFamily: "var(--font-mono)", fontSize: 12,
+    color: "var(--ink-secondary)", minWidth: 42, textAlign: "center",
+  },
+  toolbarBtn: {
+    background: "transparent", border: "1px solid var(--border-color)",
+    borderRadius: "var(--radius)", color: "var(--ink-secondary)",
+    cursor: "pointer", fontSize: 14, padding: "2px 6px",
+    lineHeight: 1,
+  },
+  image: {
+    position: "absolute", top: 0, left: 0,
+    pointerEvents: "none", userSelect: "none",
+  },
+  svgOverlay: {
+    position: "absolute", top: 0, left: 0, width: "100%", height: "100%",
+    pointerEvents: "none", zIndex: 5,
+  },
+  fallback: {
+    position: "absolute", inset: 0,
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    color: "var(--ink-disabled)",
+  },
+  fallbackIcon: { fontSize: 48, marginBottom: "var(--space-12)", opacity: 0.5 },
+  fallbackText: { fontSize: 15, fontWeight: 600, color: "var(--ink-secondary)", marginBottom: "var(--space-4)" },
+  fallbackHint: { fontSize: 12 },
+};
+
+// ── Drawing selector ─────────────────────────────────────────────────────
+function DrawingTabs({ drawings, activeDrawingId, onSelect }) {
+  return React.createElement("div", { style: tabStyles.wrapper },
+    drawings.map((d) =>
+      React.createElement("button", {
+        key: d.id,
+        onClick: () => onSelect(d.id),
+        style: {
+          ...tabStyles.tab,
+          borderBottomColor: d.id === activeDrawingId ? "var(--accent-primary)" : "transparent",
+          color: d.id === activeDrawingId ? "var(--ink)" : "var(--ink-secondary)",
+        },
+      }, `图纸 ${d.sequence} · ${d.filename}`)
+    )
+  );
+}
+
+const tabStyles = {
+  wrapper: {
+    display: "flex", gap: 1, background: "var(--bg-surface)",
+    borderBottom: "1px solid var(--border-color)", padding: "0 var(--space-12)",
+    overflowX: "auto",
+  },
+  tab: {
+    padding: "6px 14px", background: "transparent", border: "none",
+    borderBottom: "2px solid transparent", cursor: "pointer",
+    fontSize: 12, whiteSpace: "nowrap",
+  },
+};
+
+// ── Version selector ─────────────────────────────────────────────────────
+function VersionSelector({ versions, currentVersionId, onChange }) {
+  return React.createElement("select", {
+    value: currentVersionId,
+    onChange: (e) => onChange(Number(e.target.value)),
+    style: versionSelectStyles.select,
+  }, versions.map((v) =>
+    React.createElement("option", { key: v.id, value: v.id },
+      `${v.version_code}${v.is_current ? " (当前)" : ""} — ${v.status}`
+    )
+  ));
+}
+
+const versionSelectStyles = {
+  select: {
+    padding: "4px 8px", background: "var(--bg-surface)",
+    border: "1px solid var(--border-color)", borderRadius: "var(--radius)",
+    color: "var(--ink)", fontSize: 12, outline: "none", cursor: "pointer",
+    fontFamily: "var(--font-mono)",
+  },
+};
+
+// ── App ──────────────────────────────────────────────────────────────────
+function App() {
+  const [versions, setVersions] = useState([]);
+  const [currentVersionId, setCurrentVersionId] = useState(versionId);
+  const [drawings, setDrawings] = useState([]);
+  const [activeDrawingId, setActiveDrawingId] = useState(null);
+  const [dims, setDims] = useState([]);
+  const [selectedDimId, setSelectedDimId] = useState(null);
+  const [versionInfo, setVersionInfo] = useState(null);
+
+  // Fetch versions
+  useEffect(() => {
+    fetch(`/api/parts/${partId}/versions`)
+      .then((r) => r.json())
+      .then((data) => {
+        setVersions(data);
+        const cv = data.find((v) => v.id === currentVersionId);
+        if (cv) setVersionInfo(cv);
+      });
+  }, [partId]);
+
+  // Fetch drawings for current version
+  useEffect(() => {
+    fetch(`/api/versions/${currentVersionId}/drawings`)
+      .then((r) => r.json())
+      .then((data) => {
+        setDrawings(data);
+        if (data.length > 0 && !activeDrawingId) {
+          setActiveDrawingId(data[0].id);
+        }
+      });
+  }, [currentVersionId]);
+
+  // Fetch dimensions for active drawing
+  useEffect(() => {
+    if (!activeDrawingId) { setDims([]); return; }
+    fetch(`/api/versions/${currentVersionId}/drawings/${activeDrawingId}/dimensions`)
+      .then((r) => r.json())
+      .then(setDims);
+  }, [currentVersionId, activeDrawingId]);
+
+  const handleVersionChange = (vid) => {
+    setCurrentVersionId(vid);
+    setActiveDrawingId(null);
+    setSelectedDimId(null);
+    window.history.replaceState(null, "", `/parts/${partId}/versions/${vid}/review`);
+    const cv = versions.find((v) => v.id === vid);
+    if (cv) setVersionInfo(cv);
+  };
+
+  const activeDrawing = drawings.find((d) => d.id === activeDrawingId);
+
+  return React.createElement("div", { style: appStyles.wrapper },
+    React.createElement(AppShell, {
+      breadcrumbs: [
+        { label: "零件列表", href: "/parts/" },
+        { label: "审核工作台" },
+      ],
+    },
+      React.createElement("div", { style: appStyles.topBar },
+        React.createElement("span", { style: { fontSize: 13, fontWeight: 600, fontFamily: "var(--font-display)" } }, versionInfo?.version_code || ""),
+        React.createElement(VersionSelector, {
+          versions, currentVersionId,
+          onChange: handleVersionChange,
+        }),
+        versionInfo && React.createElement(StatusDot, { status: versionInfo.status, label: versionInfo.status }),
+      ),
+      React.createElement("div", { style: appStyles.body },
+        React.createElement("div", { style: appStyles.canvasArea },
+          drawings.length > 1 && React.createElement(DrawingTabs, {
+            drawings, activeDrawingId, onSelect: setActiveDrawingId,
+          }),
+          React.createElement(DrawingCanvas, {
+            drawing: activeDrawing,
+            dims, selectedDimId, onSelectDim: setSelectedDimId,
+          }),
+        ),
+        React.createElement("div", { style: appStyles.panel },
+          React.createElement("div", { style: { padding: "var(--space-24)", color: "var(--ink-secondary)", fontSize: 13 } },
+            "选择标注查看详情"
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+const appStyles = {
+  wrapper: { height: "100%", display: "flex", flexDirection: "column" },
+  topBar: {
+    display: "flex", alignItems: "center", gap: "var(--space-12)",
+    padding: "6px var(--space-16)", background: "var(--bg-surface)",
+    borderBottom: "1px solid var(--border-color)",
+  },
+  body: { flex: 1, display: "flex", overflow: "hidden" },
+  canvasArea: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
+  panel: {
+    width: 340, minWidth: 280, background: "var(--bg-surface)",
+    borderLeft: "1px solid var(--border-color)", overflowY: "auto",
+  },
+};
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+</script>
+{% endblock %}

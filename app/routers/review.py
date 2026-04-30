@@ -28,7 +28,7 @@ def review_page(request: Request, part_id: int, version_id: int, db: Session = D
     version = db.query(Version).filter(Version.id == version_id, Version.part_id == part_id).first()
     if not version:
         raise HTTPException(status_code=404, detail="版本不存在")
-    return templates.TemplateResponse(request, "spa.html", {
+    return templates.TemplateResponse(request, "review_workbench.html", {
         "title": f"{part.name} — 图纸审核",
     })
 
@@ -44,6 +44,12 @@ def list_versions(part_id: int, db: Session = Depends(get_db)):
              "status": v.status.value, "confirm_result": v.confirm_result.value if v.confirm_result else None,
              "created_at": v.created_at.strftime("%Y-%m-%d %H:%M") if v.created_at else None}
             for v in versions]
+
+
+@api.get("/versions/{version_id}/drawings")
+def list_drawings(version_id: int, db: Session = Depends(get_db)):
+    drawings = db.query(Drawing).filter(Drawing.version_id == version_id).order_by(Drawing.sequence).all()
+    return [{"id": d.id, "sequence": d.sequence, "filename": d.filename} for d in drawings]
 
 
 # ---------------------------------------------------------------------------
