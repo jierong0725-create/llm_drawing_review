@@ -7,13 +7,97 @@
   <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone@7.24.5/babel.min.js" crossorigin></script>
+  <style>
+    /* ── 浅色主题 ── */
+    :root {
+      --bg-canvas: #f1f3f7;
+      --bg-surface: #ffffff;
+      --bg-elevated: #f8f9fc;
+      --bg-hover: rgba(0,0,0,0.03);
+      --bg-selected: rgba(220,130,0,0.07);
+      --signal-green: #16a34a;
+      --signal-red: #dc2626;
+      --signal-amber: #d97706;
+      --signal-gray: #6b7280;
+      --signal-blue: #2563eb;
+      --accent-primary: #c97f00;
+      --accent-hover: #a66800;
+      --accent-dim: rgba(201,127,0,0.12);
+      --ink: #1e2635;
+      --ink-secondary: #4b5668;
+      --ink-disabled: #9ca3af;
+      --border-color: #e2e6ed;
+      --border-strong: #cbd2dc;
+      --shadow-card: 0 2px 12px rgba(0,0,0,0.10);
+      --space-4: 4px; --space-8: 8px; --space-12: 12px;
+      --space-16: 16px; --space-24: 24px; --space-32: 32px;
+      --font-display: "DIN Alternate", "Helvetica Neue", sans-serif;
+      --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
+      --font-ui: -apple-system, system-ui, sans-serif;
+      --radius: 2px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; overflow: hidden; }
+    body {
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--ink);
+      background: var(--bg-canvas);
+      -webkit-font-smoothing: antialiased;
+      font-feature-settings: "tnum";
+    }
+
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes stampIn { 0%{opacity:0;transform:rotate(-14deg) scale(0.7)} 60%{transform:rotate(-12deg) scale(1.08)} 100%{opacity:1;transform:rotate(-12deg) scale(1)} }
+    @keyframes contextMenuIn { from{opacity:0;transform:scale(0.92)} to{opacity:1;transform:scale(1)} }
+
+    .fade-in { animation: fadeIn 0.18s ease; }
+
+    table.industrial { width: 100%; border-collapse: collapse; }
+    table.industrial th {
+      text-align: left; padding: 8px 14px;
+      font-size: 10px; font-weight: 600;
+      color: var(--ink-secondary); text-transform: uppercase; letter-spacing: 0.07em;
+      border-bottom: 1px solid var(--border-color);
+      background: var(--bg-elevated);
+    }
+    table.industrial td {
+      padding: 10px 14px; border-bottom: 1px solid var(--border-color);
+      font-variant-numeric: tabular-nums; color: var(--ink);
+    }
+    table.industrial tbody tr { cursor: pointer; transition: background 0.1s; }
+    table.industrial tbody tr:hover { background: var(--bg-hover); }
+    table.industrial tbody tr.selected { background: var(--bg-selected); }
+
+    .ctx-menu {
+      position: fixed; z-index: 9999;
+      background: var(--bg-surface); border: 1px solid var(--border-strong);
+      border-radius: 6px; padding: 4px; min-width: 160px;
+      box-shadow: var(--shadow-card);
+      animation: contextMenuIn 0.12s ease;
+    }
+    .ctx-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px; border-radius: 4px; cursor: pointer;
+      font-size: 12px; color: var(--ink); transition: background 0.1s;
+    }
+    .ctx-item:hover { background: var(--bg-hover); }
+    .ctx-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+    .ctx-divider { height: 1px; background: var(--border-color); margin: 3px 0; }
+
+    .progress-track { background: var(--border-color); border-radius: 2px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+  </style>
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel" src="/static/jsx/design_tokens.jsx"></script>
-  <script type="text/babel" src="/static/jsx/app_shell.jsx"></script>
-  <script type="text/babel" src="/static/jsx/status_dot.jsx"></script>
-  <script type="text/babel" src="/static/jsx/stamp.jsx"></script>
+  <script type="text/babel" src="/static/jsx/shared.jsx"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
