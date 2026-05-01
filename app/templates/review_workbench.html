@@ -1,9 +1,80 @@
 {% extends "spa.html" %}
 {% block scripts %}
-<script type="text/babel" src="/static/jsx/marker_label.jsx"></script>
 <script type="text/babel">
 {% raw %}
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+function btnStyle(variant, extra = {}) {
+  const base = { border:"none", borderRadius:4, cursor:"pointer", fontWeight:600, padding:"6px 14px", fontSize:12, transition:"all 0.15s" };
+  const variants = {
+    accent: { background:"var(--accent-primary)", color:"#1a1a1a" },
+    ghost: { background:"transparent", border:"1px solid var(--border-color)", color:"var(--ink-secondary)" },
+    green: { background:"var(--signal-green)", color:"#fff" },
+    red: { background:"var(--signal-red)", color:"#fff" },
+  };
+  return { ...base, ...(variants[variant]||{}), ...extra };
+}
+
+const STATUS_COLOR = {
+  pending: "var(--signal-gray)",
+  confirmed: "var(--signal-green)",
+  questionable: "var(--signal-amber)",
+  rejected: "var(--signal-red)",
+  nok: "var(--signal-red)",
+};
+const DIM_COLORS = STATUS_COLOR;
+
+// ── MarkerLabel ────────────────────────────────────────────────────────────────
+function MarkerLabel({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContextMenu, originalX, originalY }) {
+  const cx = dim.anchor_x * zoom + offsetX;
+  const cy = dim.anchor_y * zoom + offsetY;
+  const tx = originalX * zoom + offsetX;
+  const ty = originalY * zoom + offsetY;
+  const size = Math.round(Math.max(20, Math.min(32, 24 / Math.sqrt(Math.max(zoom, 0.15)))));
+  const fontSize = Math.round(Math.max(9, Math.min(13, 10 / Math.sqrt(Math.max(zoom, 0.15)))));
+  const color = STATUS_COLOR[dim.review_status] || STATUS_COLOR.pending;
+  const hasLeader = Math.hypot(cx - tx, cy - ty) > size * 0.6;
+
+  return (
+    <>
+      {hasLeader && (
+        <svg style={{ position:"absolute", inset:0, width:"100%", height:"100%",
+                      pointerEvents:"none", zIndex:8, overflow:"visible" }}>
+          <line x1={cx} y1={cy} x2={tx} y2={ty}
+            stroke={color} strokeWidth={isSelected ? 1.5 : 1}
+            strokeDasharray={isSelected ? "none" : "4 3"}
+            opacity={isSelected ? 0.85 : 0.45} />
+          <circle cx={tx} cy={ty} r={isSelected ? 3.5 : 2.5}
+            fill={color} opacity={isSelected ? 1 : 0.65} />
+        </svg>
+      )}
+      <div
+        data-marker="true"
+        onClick={e => { e.stopPropagation(); onClick(dim.id); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
+        style={{
+          position:"absolute", left: cx, top: cy,
+          width: size, height: size,
+          transform: isSelected ? "translate(-50%,-50%) scale(1.18)" : "translate(-50%,-50%)",
+          backgroundColor: color,
+          color:"#fff",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          fontFamily:"var(--font-mono)", fontSize, fontWeight:700,
+          borderRadius: "50%",
+          border: isSelected ? "2.5px solid var(--accent-primary)" : "2px solid rgba(255,255,255,0.55)",
+          cursor:"pointer", zIndex: isSelected ? 25 : 10,
+          boxShadow: isSelected
+            ? "0 0 0 4px var(--accent-dim), 0 3px 10px rgba(0,0,0,0.3)"
+            : "0 1px 5px rgba(0,0,0,0.25)",
+          transition:"transform 0.15s, box-shadow 0.15s",
+        }}
+        title={`#${dim.sequence} ${dim.value}`}
+      >
+        {dim.sequence}
+      </div>
+    </>
+  );
+}
 
 const pathParts = window.location.pathname.split("/");
 const partId = Number(pathParts[2]);
@@ -11,10 +82,10 @@ const versionId = Number(pathParts[4]);
 
 // ── 状态配置 ────────────────────────────────────────────────────────────────
 const REVIEW_STATUSES = [
-  { value: "confirmed",    label: "确认",  color: "var(--signal-green)" },
-  { value: "questionable", label: "存疑",  color: "var(--signal-amber)" },
-  { value: "rejected",     label: "驳回",  color: "var(--signal-red)"   },
-  { value: "pending",      label: "待审",  color: "var(--signal-gray)"  },
+  { value: "confirmed",    label: "确认/OK",  color: "var(--signal-green)" },
+  { value: "questionable", label: "存疑",     color: "var(--signal-amber)" },
+  { value: "rejected",     label: "驳回/NOK", color: "var(--signal-red)"   },
+  { value: "pending",      label: "待审",     color: "var(--signal-gray)"  },
 ];
 
 // ── usePanZoom ───────────────────────────────────────────────────────────────
@@ -139,6 +210,12 @@ function ContextMenu({ x, y, dim, onClose, onStatusChange }) {
   );
 }
 
+const iconBtn = {
+  background:"transparent", border:"none", color:"var(--ink-secondary)",
+  cursor:"pointer", padding:"2px 4px", borderRadius:3, display:"flex", alignItems:"center",
+  fontSize:11,
+};
+
 // ── DrawingCanvas ────────────────────────────────────────────────────────────
 function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim, onContextMenuDim, readOnly }) {
   const containerRef = useRef(null);
@@ -163,9 +240,21 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim, onContextMen
       onDoubleClick={() => fitScreen()}
       style={{ flex: 1, position: "relative", overflow: "hidden", background: "#e8eaed", cursor: "grab" }}
     >
-      <div style={{ position: "absolute", top: 8, right: 8, zIndex: 30, display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.85)", border: "1px solid var(--border-color)", borderRadius: 2, padding: "4px 8px", backdropFilter: "blur(4px)" }}>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-secondary)", minWidth: 42, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => fitScreen()} style={{ background: "transparent", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink-secondary)", cursor: "pointer", fontSize: 14, padding: "2px 6px", lineHeight: 1 }} title="适应窗口">⊞</button>
+      <div style={{ position:"absolute", top:10, right:10, zIndex:30,
+        display:"flex", alignItems:"center", gap:4,
+        background:"rgba(255,255,255,0.85)", border:"1px solid var(--border-color)",
+        borderRadius:5, padding:"3px 6px", backdropFilter:"blur(4px)" }}>
+        <button onClick={e=>{e.stopPropagation(); fitScreen();}} style={iconBtn} title="适应窗口">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M1 4V1h3M9 1h3v3M12 9v3h-3M4 12H1V9"/>
+          </svg>
+        </button>
+        <div style={{ width:1, height:14, background:"var(--border-color)" }} />
+        <span style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--ink-secondary)", minWidth:38, textAlign:"center" }}>
+          {Math.round(zoom*100)}%
+        </span>
+        <div style={{ width:1, height:14, background:"var(--border-color)" }} />
+        <button onClick={e=>{e.stopPropagation();}} style={iconBtn} title="双击图纸适应窗口 · 滚轮缩放 · 拖拽平移">?</button>
       </div>
       {imageError ? (
         <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--ink-disabled)" }}>
@@ -184,23 +273,124 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim, onContextMen
       )}
       {showGuides && (
         <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 5 }}>
-          {adjustedDims.filter(d => Math.abs(d._gx) > 1 || Math.abs(d._gy) > 1).map(d => (
+          {adjustedDims.filter(d => Math.abs(d._gx) > 2 || Math.abs(d._gy) > 2).map(d => (
             <line key={`g-${d.id}`}
               x1={(d.anchor_x + d._gx) * zoom + offset.x} y1={(d.anchor_y + d._gy) * zoom + offset.y}
               x2={d.anchor_x * zoom + offset.x} y2={d.anchor_y * zoom + offset.y}
-              stroke="var(--ink-disabled)" strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
+              stroke="var(--ink-disabled)" strokeWidth={0.8} strokeDasharray="3 3" opacity={0.5} />
           ))}
         </svg>
       )}
       {adjustedDims.map(d => (
         <MarkerLabel key={d.id}
           dim={{ ...d, anchor_x: d.anchor_x + d._gx, anchor_y: d.anchor_y + d._gy }}
+          originalX={d.anchor_x} originalY={d.anchor_y}
           zoom={zoom} offsetX={offset.x} offsetY={offset.y}
           isSelected={d.id === selectedDimId}
           onClick={onSelectDim}
           onContextMenu={!readOnly ? onContextMenuDim : undefined}
         />
       ))}
+      <HintBar />
+    </div>
+  );
+}
+
+function HintBar() {
+  const [visible, setVisible] = React.useState(true);
+  React.useEffect(() => {
+    const t = setTimeout(() => setVisible(false), 3000);
+    return () => clearTimeout(t);
+  }, []);
+  if (!visible) return null;
+  return (
+    <div style={{
+      position:"absolute", bottom:10, left:"50%", transform:"translateX(-50%)",
+      fontSize:10, color:"var(--ink-disabled)", pointerEvents:"none",
+      background:"var(--bg-elevated)", padding:"3px 10px", borderRadius:3,
+      border:"1px solid var(--border-color)",
+      animation:"fadeIn 0.3s ease", transition:"opacity 0.5s",
+    }}>
+      滚轮缩放 · 拖拽平移 · 双击适应 · 右键标注改状态
+    </div>
+  );
+}
+
+function ReviewProgress({ dims }) {
+  const total = dims.length;
+  const confirmed    = dims.filter(d=>d.review_status==="confirmed").length;
+  const questionable = dims.filter(d=>d.review_status==="questionable").length;
+  const rejected     = dims.filter(d=>d.review_status==="rejected").length;
+  const pending      = dims.filter(d=>d.review_status==="pending").length;
+  const done = confirmed + questionable + rejected;
+  const pct = total > 0 ? Math.round(done/total*100) : 0;
+
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+      <div style={{ display:"flex", gap:4 }}>
+        {[
+          [confirmed, "var(--signal-green)", "✓"],
+          [questionable, "var(--signal-amber)", "?"],
+          [rejected, "var(--signal-red)", "✕"],
+          [pending, "var(--ink-disabled)", "·"],
+        ].filter(([c]) => c > 0).map(([count, color, icon], i) => (
+          <span key={i} style={{
+            display:"inline-flex", alignItems:"center", gap:3,
+            fontSize:11, fontFamily:"var(--font-mono)",
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border-color)",
+            borderRadius:3, padding:"1px 6px", color,
+          }}>
+            {icon} {count}
+          </span>
+        ))}
+      </div>
+      <div className="progress-track" style={{ height:4, width:80 }}>
+        <div className="progress-fill" style={{
+          width: pct + "%",
+          background: pct===100 ? "var(--signal-green)" : "var(--accent-primary)",
+        }} />
+      </div>
+      <span style={{ fontSize:10, fontFamily:"var(--font-mono)", color: pct===100?"var(--signal-green)":"var(--ink-secondary)", minWidth:28 }}>
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
+function Stamp({ type, date }) {
+  const ok = type === "approved";
+  return (
+    <div style={{
+      display:"inline-flex", flexDirection:"column", alignItems:"center", gap:3,
+      border:`2px solid ${ok ? "var(--signal-green)" : "var(--signal-red)"}`,
+      borderRadius:4, padding:"10px 28px",
+      color: ok ? "var(--signal-green)" : "var(--signal-red)",
+      transform:`rotate(${ok ? -12 : 12}deg)`,
+      animation:"stampIn 0.45s cubic-bezier(0.34,1.56,0.64,1)",
+      opacity:0.88, userSelect:"none",
+      fontFamily:"var(--font-display)", letterSpacing:"0.12em",
+    }}>
+      <div style={{ fontSize:28, fontWeight:700 }}>{ok ? "✓" : "✕"}</div>
+      <div style={{ fontSize:11, fontWeight:700 }}>{ok ? "APPROVED" : "REJECTED"}</div>
+      {date && <div style={{ fontSize:9, color:"var(--ink-secondary)", letterSpacing:"0.05em" }}>{date}</div>}
+    </div>
+  );
+}
+
+function AIBadge({ suggestion }) {
+  const [expanded, setExpanded] = useState(false);
+  const [result] = useState(suggestion);
+
+  return (
+    <div style={{
+      background:"var(--accent-dim)", border:"1px solid rgba(201,127,0,0.25)",
+      borderRadius:4, padding:"6px 10px", fontSize:11,
+    }}>
+      <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }} onClick={() => setExpanded(e=>!e)}>
+        <span style={{ color:"var(--accent-primary)", fontWeight:700, fontSize:10, letterSpacing:"0.06em" }}>AI</span>
+        <span style={{ color:"var(--ink-secondary)", flex:1 }}>{result}</span>
+      </div>
     </div>
   );
 }
@@ -222,91 +412,64 @@ function DrawingTabs({ drawings, activeDrawingId, onSelect }) {
   );
 }
 
-// ── DimensionList ────────────────────────────────────────────────────────────
-const DIM_FILTERS = [
-  { value: "all", label: "全部" },
-  { value: "pending", label: "待审" },
-  { value: "confirmed", label: "确认" },
-  { value: "questionable", label: "存疑" },
-  { value: "rejected", label: "驳回" },
-];
+function ConclusionBar({ dims, versionInfo, onConfirm, notes, onNotesChange }) {
+  const [showConfirm, setShowConfirm] = useState(null);
+  const counts = useMemo(() => ({
+    total: dims.length,
+    confirmed: dims.filter(d=>d.review_status==="confirmed").length,
+    questionable: dims.filter(d=>d.review_status==="questionable").length,
+    pending: dims.filter(d=>d.review_status==="pending").length,
+    rejected: dims.filter(d=>d.review_status==="rejected").length,
+  }), [dims]);
 
-const DIM_COLORS = {
-  pending: "var(--signal-gray)", confirmed: "var(--signal-green)",
-  questionable: "var(--signal-amber)", rejected: "var(--signal-red)",
-};
+  if (versionInfo?.confirm_result) {
+    return (
+      <div style={{ borderTop:"1px solid var(--border-color)", padding:20, display:"flex", justifyContent:"center" }}>
+        <Stamp type={versionInfo.confirm_result} date={versionInfo.confirmed_at || "2026-05-01"} />
+      </div>
+    );
+  }
 
-function DimensionList({ dims, selectedDimId, onSelect, filter, onFilterChange }) {
-  const filtered = filter === "all" ? dims : dims.filter(d => d.review_status === filter);
   return (
-    <div>
-      <div style={{ display: "flex", gap: 1, padding: "0 12px", borderBottom: "1px solid var(--border-color)", alignItems: "center" }}>
-        {DIM_FILTERS.map(opt => (
-          <button key={opt.value} onClick={() => onFilterChange(opt.value)} style={{
-            padding: "6px 10px", background: "transparent", border: "none",
-            borderBottom: `2px solid ${filter === opt.value ? "var(--accent-primary)" : "transparent"}`,
-            cursor: "pointer", fontSize: 12,
-            color: filter === opt.value ? "var(--accent-primary)" : "var(--ink-secondary)",
-          }}>{opt.label}</button>
-        ))}
-        <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--ink-disabled)", fontFamily: "monospace" }}>{filtered.length}/{dims.length}</span>
+    <div style={{ borderTop:"1px solid var(--border-strong)", flexShrink:0, padding:12 }}>
+      <div style={{ display:"flex", gap:12, marginBottom:10, fontSize:10, fontFamily:"var(--font-mono)" }}>
+        {[["待审",counts.pending,"var(--ink-disabled)"],["确认",counts.confirmed,"var(--signal-green)"],["存疑",counts.questionable,"var(--signal-amber)"],["NOK",counts.rejected,"var(--signal-red)"]]
+          .filter(([_,v]) => v > 0)
+          .map(([l,v,c]) => (
+            <span key={l} style={{ color:c }}>{l} {v}</span>
+          ))}
+        <span style={{ marginLeft:"auto", color:"var(--ink-disabled)" }}>共 {counts.total} 条</span>
       </div>
-      <div style={{ maxHeight: 240, overflowY: "auto" }}>
-        {filtered.length === 0
-          ? <div style={{ padding: 24, textAlign: "center", color: "var(--ink-disabled)", fontSize: 12 }}>暂无标注</div>
-          : filtered.map(d => (
-              <div key={d.id} onClick={() => onSelect(d.id)} style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "6px 12px", cursor: "pointer",
-                borderBottom: "1px solid var(--border-color)",
-                background: d.id === selectedDimId ? "var(--bg-selected)" : "transparent",
-              }}>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 700, color: "var(--ink-disabled)", minWidth: 22 }}>{String(d.sequence).padStart(2, "0")}</span>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--ink)", flex: 1 }}>{d.value}</span>
-                <span style={{ width: 7, height: 7, borderRadius: 2, flexShrink: 0, backgroundColor: DIM_COLORS[d.review_status] || DIM_COLORS.pending }} />
-                {d.message_count > 0 && (
-                  <span style={{ fontSize: 10, background: "var(--accent-primary)", color: "#fff", borderRadius: 2, minWidth: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>{d.message_count}</span>
-                )}
-              </div>
-            ))
-        }
+      <textarea value={notes} onChange={e=>onNotesChange(e.target.value)}
+        placeholder="审核备注…" rows={2} style={{
+          width:"100%", padding:"6px 8px", background:"var(--bg-canvas)",
+          border:"1px solid var(--border-color)", borderRadius:3,
+          color:"var(--ink)", fontSize:11, outline:"none", resize:"none", marginBottom:8,
+        }}
+      />
+      <div style={{ display:"flex", gap:6 }}>
+        <button onClick={()=>setShowConfirm("approved")} style={btnStyle("green",{flex:1,fontSize:12})}>✓ 通过</button>
+        <button onClick={()=>setShowConfirm("rejected")} style={btnStyle("red",{flex:1,fontSize:12})}>✕ 驳回</button>
       </div>
-    </div>
-  );
-}
-
-// ── DimensionDetail ──────────────────────────────────────────────────────────
-function DimensionDetail({ dim, readOnly, onStatusChange }) {
-  if (!dim) return (
-    <div style={{ padding: 16, color: "var(--ink-disabled)", fontSize: 12, textAlign: "center" }}>选择一个标注</div>
-  );
-  return (
-    <div style={{ padding: 16, borderBottom: "1px solid var(--border-color)" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-disabled)" }}>#{String(dim.sequence).padStart(2, "0")}</span>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>{dim.value}</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-        {[["类型", dim.dim_type], ["来源", dim.source], ["视图", dim.view_name || "—"], ["坐标", dim.anchor_x ? `${Math.round(dim.anchor_x)}, ${Math.round(dim.anchor_y)}` : "—"]].map(([label, value]) => (
-          <div key={label}>
-            <div style={{ fontSize: 10, color: "var(--ink-disabled)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
-            <div style={{ fontSize: 12, color: "var(--ink)", fontFamily: "var(--font-mono)" }}>{value}</div>
-          </div>
-        ))}
-      </div>
-      {!readOnly && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 11, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>状态</span>
-          <div style={{ display: "flex", gap: 4 }}>
-            {REVIEW_STATUSES.map(s => (
-              <button key={s.value} onClick={() => onStatusChange(dim.id, s.value)} style={{
-                padding: "3px 10px", border: "1px solid",
-                borderRadius: 2, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                background: dim.review_status === s.value ? s.color : "transparent",
-                color: dim.review_status === s.value ? "#fff" : "var(--ink-secondary)",
-                borderColor: dim.review_status === s.value ? s.color : "var(--border-color)",
-              }}>{s.label}</button>
-            ))}
+      {showConfirm && (
+        <div style={{ position:"fixed", inset:0, zIndex:300, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"center", justifyContent:"center" }} onClick={()=>setShowConfirm(null)}>
+          <div style={{ background:"var(--bg-elevated)", borderRadius:8, padding:24, width:340, border:"1px solid var(--border-strong)", boxShadow:"var(--shadow-card)" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ fontSize:14, fontWeight:700, marginBottom:10, color:"var(--ink)" }}>
+              确认{showConfirm==="approved"?"通过":"驳回"}此版本？
+            </div>
+            <div style={{ fontSize:12, color:"var(--ink-secondary)", marginBottom:16, lineHeight:1.6 }}>
+              {showConfirm==="approved" && counts.pending > 0 && (
+                <div style={{ background:"rgba(220,38,38,0.08)", border:"1px solid var(--signal-amber)", borderRadius:4, padding:"6px 10px", marginBottom:10, color:"var(--signal-amber)", fontSize:11, fontWeight:600 }}>
+                  ⚠ 仍有 {counts.pending} 条标注处于待审状态，确认通过将忽略这些标注。
+                </div>
+              )}
+              当前待审标注 <strong style={{color:"var(--signal-amber)"}}>{counts.pending}</strong> 条。
+              {showConfirm==="approved" ? "通过后标注状态将被锁定。" : "驳回后版本将被标记为不合格。"}
+            </div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={()=>setShowConfirm(null)} style={btnStyle("ghost")}>取消</button>
+              <button onClick={()=>{ onConfirm(showConfirm, notes); setShowConfirm(null); }} style={btnStyle(showConfirm==="approved"?"green":"red")}>确认提交</button>
+            </div>
           </div>
         </div>
       )}
@@ -314,56 +477,151 @@ function DimensionDetail({ dim, readOnly, onStatusChange }) {
   );
 }
 
-// ── DiscussionThread ─────────────────────────────────────────────────────────
-function DiscussionThread({ dimId, readOnly }) {
-  const [messages, setMessages] = useState([]);
+function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, versionInfo, onConfirm, readOnly }) {
+  const [filter, setFilter] = useState("all");
+  const [messages, setMessages] = useState({});
   const [text, setText] = useState("");
+  const [notes, setNotes] = useState("");
   const [sending, setSending] = useState(false);
 
+  const filtered = filter === "all" ? dims : dims.filter(d => d.review_status === filter);
+  const selectedDim = dims.find(d => d.id === selectedDimId);
+  const msgs = selectedDim ? (messages[selectedDim.id] || []) : [];
+
   useEffect(() => {
-    if (!dimId) { setMessages([]); return; }
-    fetch(`/api/dimensions/${dimId}/messages`).then(r => r.json()).then(setMessages);
-  }, [dimId]);
+    if (!selectedDimId) return;
+    fetch(`/api/dimensions/${selectedDimId}/messages`).then(r => r.json()).then(data => {
+      setMessages(prev => ({ ...prev, [selectedDimId]: data }));
+    });
+  }, [selectedDimId]);
 
   const handleSend = async () => {
-    if (!text.trim() || sending) return;
+    if (!text.trim() || sending || !selectedDimId) return;
     setSending(true);
     try {
-      const resp = await fetch(`/api/dimensions/${dimId}/messages`, {
+      const resp = await fetch(`/api/dimensions/${selectedDimId}/messages`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ author: "审核员", content: text.trim() }),
       });
-      if (resp.ok) { setMessages(prev => [...prev, await resp.json()]); setText(""); }
+      if (resp.ok) { const m = await resp.json(); setMessages(prev => ({...prev, [selectedDimId]: [...(prev[selectedDimId]||[]), m]})); setText(""); }
     } finally { setSending(false); }
   };
 
   return (
-    <div style={{ borderBottom: "1px solid var(--border-color)" }}>
-      <div style={{ padding: 12, maxHeight: 200, overflowY: "auto" }}>
-        {messages.length === 0
-          ? <div style={{ color: "var(--ink-disabled)", fontSize: 12, textAlign: "center", padding: 16 }}>暂无讨论</div>
-          : messages.map(m => (
-              <div key={m.id} style={{ background: "var(--bg-elevated)", borderRadius: 2, padding: "8px 12px", marginBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--accent-primary)" }}>{m.author}</span>
-                  <span style={{ fontSize: 10, color: "var(--ink-disabled)" }}>{m.created_at}</span>
-                </div>
-                <div style={{ fontSize: 12, color: "var(--ink)", lineHeight: 1.5 }}>{m.content}</div>
-              </div>
-            ))
+    <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:0, borderBottom:"1px solid var(--border-color)", padding:"0 12px", flexShrink:0 }}>
+        {[["all","全部"],["pending","待审"],["confirmed","确认"],["questionable","存疑"],["rejected","NOK"]].map(([v,l]) => (
+          <button key={v} onClick={() => { setFilter(v); onSelectDim && onSelectDim(null); }} style={{
+            padding:"7px 10px", background:"transparent", border:"none",
+            borderBottom:`2px solid ${filter===v?"var(--accent-primary)":"transparent"}`,
+            color: filter===v ? "var(--accent-primary)" : "var(--ink-secondary)",
+            cursor:"pointer", fontSize:11, transition:"all 0.15s",
+          }}>{l}</button>
+        ))}
+        <span style={{ marginLeft:"auto", fontSize:10, fontFamily:"var(--font-mono)", color:"var(--ink-disabled)" }}>
+          {filtered.length}/{dims.length}
+        </span>
+      </div>
+
+      <div style={{ flex:"0 0 auto", maxHeight:220, overflowY:"auto" }}>
+        {filtered.length === 0
+          ? <div style={{ padding:20, textAlign:"center", color:"var(--ink-disabled)", fontSize:11 }}>暂无标注</div>
+          : filtered.map(d => (
+            <div key={d.id} onClick={() => onSelectDim(d.id)} style={{
+              display:"flex", alignItems:"center", gap:8,
+              padding:"7px 12px", cursor:"pointer",
+              background: d.id === selectedDimId ? "var(--bg-selected)" : "transparent",
+              borderBottom:"1px solid var(--border-color)", transition:"background 0.1s",
+            }}>
+              <span style={{
+                width:20, height:20, borderRadius:3, flexShrink:0,
+                background: STATUS_COLOR[d.review_status] || STATUS_COLOR.pending,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:9, fontWeight:700, color:"#fff", fontFamily:"var(--font-mono)",
+              }}>{d.sequence}</span>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:12, flex:1, color:"var(--ink)" }}>{d.value}</span>
+              {d.message_count > 0 && (
+                <span style={{ fontSize:9, background:"var(--accent-primary)", color:"#1a1a1a",
+                  borderRadius:2, minWidth:15, height:15,
+                  display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700,
+                }}>{d.message_count}</span>
+              )}
+              {showAI && d.ai_suggestion && <span style={{ fontSize:9, color:"var(--accent-primary)", fontWeight:700 }}>AI</span>}
+            </div>
+          ))
         }
       </div>
-      {!readOnly && (
-        <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid var(--border-color)" }}>
-          <input value={text} onChange={e => setText(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder="输入讨论内容..." style={{ flex: 1, padding: "5px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 12, outline: "none" }} />
-          <button onClick={handleSend} disabled={sending || !text.trim()} style={{ padding: "5px 14px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, opacity: sending || !text.trim() ? 0.5 : 1 }}>发送</button>
-        </div>
-      )}
+
+      <div style={{ height:1, background:"var(--border-strong)", flexShrink:0 }} />
+
+      <div style={{ flex:1, overflowY:"auto" }}>
+        {!selectedDim ? (
+          <div style={{ padding:24, textAlign:"center", color:"var(--ink-disabled)", fontSize:11 }}>选择一个标注</div>
+        ) : (
+          <div style={{ padding:12 }} className="fade-in">
+            <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:12 }}>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--ink-disabled)" }}>#{String(selectedDim.sequence).padStart(2,"0")}</span>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:15, fontWeight:700, color:"var(--ink)" }}>{selectedDim.value}</span>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:12 }}>
+              {[["类型",selectedDim.dim_type],["来源",selectedDim.source],["视图",selectedDim.view_name||"—"],["坐标",`${Math.round(selectedDim.anchor_x)},${Math.round(selectedDim.anchor_y)}`]].map(([l,v])=>(
+                <div key={l}>
+                  <div style={{ fontSize:9, color:"var(--ink-disabled)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:2 }}>{l}</div>
+                  <div style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--ink)" }}>{v}</div>
+                </div>
+              ))}
+            </div>
+            {showAI && selectedDim.ai_suggestion && <div style={{ marginBottom:10 }}><AIBadge suggestion={selectedDim.ai_suggestion} /></div>}
+            {!readOnly && (
+              <div style={{ display:"flex", gap:4, marginBottom:12 }}>
+                {[["confirmed","确认","var(--signal-green)"],["questionable","存疑","var(--signal-amber)"],["rejected","NOK","var(--signal-red)"],["pending","待审","var(--signal-gray)"]].map(([s,l,c])=>(
+                  <button key={s} onClick={() => onStatusChange(selectedDim.id, s)} style={{
+                    flex:1, padding:"5px 0", border:`1px solid ${selectedDim.review_status===s?c:"var(--border-color)"}`,
+                    borderRadius:3, cursor:"pointer", fontSize:11, fontWeight:600,
+                    background: selectedDim.review_status===s ? c : "transparent",
+                    color: selectedDim.review_status===s ? ((s==="confirmed"||s==="rejected")?"#fff":"#1a1a1a") : "var(--ink-secondary)",
+                    transition:"all 0.15s",
+                  }}>{l}</button>
+                ))}
+              </div>
+            )}
+            <div style={{ fontSize:10, color:"var(--ink-secondary)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>讨论</div>
+            <div style={{ maxHeight:120, overflowY:"auto", marginBottom:8 }}>
+              {msgs.length === 0
+                ? <div style={{ color:"var(--ink-disabled)", fontSize:11, padding:"4px 0" }}>暂无讨论</div>
+                : msgs.map(m => (
+                  <div key={m.id} style={{ background:"var(--bg-elevated)", borderRadius:4, padding:"6px 8px", marginBottom:5 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+                      <span style={{ fontSize:10, fontWeight:700, color:"var(--accent-primary)" }}>{m.author}</span>
+                      <span style={{ fontSize:9, color:"var(--ink-disabled)" }}>{m.created_at}</span>
+                    </div>
+                    <div style={{ fontSize:11, color:"var(--ink)", lineHeight:1.5 }}>{m.content}</div>
+                  </div>
+                ))
+              }
+            </div>
+            {!readOnly && (
+              <div style={{ display:"flex", gap:6 }}>
+                <input value={text} onChange={e=>setText(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey&&text.trim()){ e.preventDefault(); handleSend(); } }}
+                  placeholder="发送评论 (Enter)" style={{
+                    flex:1, padding:"5px 8px", background:"var(--bg-canvas)",
+                    border:"1px solid var(--border-color)", borderRadius:3,
+                    color:"var(--ink)", fontSize:11, outline:"none",
+                  }}
+                />
+                <button onClick={handleSend} disabled={sending||!text.trim()} style={btnStyle("accent",{fontSize:11,padding:"5px 10px",opacity:(sending||!text.trim())?0.5:1})}>发</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <ConclusionBar dims={dims} versionInfo={versionInfo} onConfirm={onConfirm} notes={notes} onNotesChange={setNotes} />
     </div>
   );
 }
+
 
 // ── App ──────────────────────────────────────────────────────────────────────
 function App() {
@@ -374,7 +632,6 @@ function App() {
   const [dims, setDims] = useState([]);
   const [selectedDimId, setSelectedDimId] = useState(null);
   const [versionInfo, setVersionInfo] = useState(null);
-  const [dimFilter, setDimFilter] = useState("all");
   const [ctxMenu, setCtxMenu] = useState(null);
 
   useEffect(() => {
@@ -398,7 +655,7 @@ function App() {
   }, [currentVersionId, activeDrawingId]);
 
   const handleVersionChange = vid => {
-    setCurrentVersionId(vid); setActiveDrawingId(null); setSelectedDimId(null); setDimFilter("all");
+    setCurrentVersionId(vid); setActiveDrawingId(null); setSelectedDimId(null);
     window.history.replaceState(null, "", `/parts/${partId}/versions/${vid}/review`);
     setVersionInfo(versions.find(v => v.id === vid) || null);
   };
@@ -416,9 +673,17 @@ function App() {
     setSelectedDimId(dim.id);
   };
 
-  const selectedDim = dims.find(d => d.id === selectedDimId);
+  const handleConfirm = async (result, notes) => {
+    await fetch(`/api/versions/${currentVersionId}/conclusion`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result, notes }),
+    });
+    setVersionInfo(prev => ({ ...prev, confirm_result: result, confirmed_at: new Date().toISOString() }));
+  };
+
   const activeDrawing = drawings.find(d => d.id === activeDrawingId);
-  const isReadOnly = versionInfo?.confirm_result != null && !versionInfo?.is_current;
+  const isReadOnly = versionInfo?.confirm_result != null;
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -426,6 +691,7 @@ function App() {
         breadcrumbs={[{ label: "零件列表", href: "/parts/" }, { label: "审核工作台" }]}
         actions={
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {dims.length > 0 && <ReviewProgress dims={dims} />}
             {versionInfo && <StatusDot status={versionInfo.status} pulse={versionInfo.status === "processing"} />}
             <select value={currentVersionId} onChange={e => handleVersionChange(Number(e.target.value))} style={{ padding: "4px 8px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 12, outline: "none", cursor: "pointer", fontFamily: "var(--font-mono)" }}>
               {versions.map(v => (
@@ -444,12 +710,16 @@ function App() {
               readOnly={isReadOnly}
             />
           </div>
-          <div style={{ width: 280, borderLeft: "1px solid var(--border-color)", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-surface)" }}>
-            <DimensionList dims={dims} selectedDimId={selectedDimId} onSelect={setSelectedDimId} filter={dimFilter} onFilterChange={setDimFilter} />
-            <div style={{ flex: 1, overflowY: "auto" }}>
-              <DimensionDetail dim={selectedDim} readOnly={isReadOnly} onStatusChange={handleStatusChange} />
-              {selectedDimId && <DiscussionThread dimId={selectedDimId} readOnly={isReadOnly} />}
-            </div>
+          <div style={{ width: 320, borderLeft: "1px solid var(--border-color)", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-surface)" }}>
+            <PanelA
+              dims={dims} showAI={true}
+              selectedDimId={selectedDimId}
+              onSelectDim={setSelectedDimId}
+              onStatusChange={handleStatusChange}
+              versionInfo={versionInfo}
+              onConfirm={handleConfirm}
+              readOnly={isReadOnly}
+            />
           </div>
         </div>
       </AppShell>
