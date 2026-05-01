@@ -358,67 +358,6 @@ def extract_dimensions_tiled(
     return all_dims
 
 
-# ── Phase 4: Verification loop ──
-
-_VERIFY_PROMPT = """You are an expert at reading mechanical engineering drawings.
-
-This image shows ONE cropped view from an engineering drawing. Below is a list of dimensions that have already been identified in this view:
-
-{text_list}
-
-Review the cropped view image carefully. Are there ANY additional dimensions visible that are NOT in the list above?
-
-- Look carefully at all areas of the image
-- Check corners, edges, and areas between already-identified dimensions
-- Include linear dimensions, diameters (\\u2ACC/\\u03A6), radii (R), angles (\\u00B0), GD&T, surface roughness, thread callouts
-- Do NOT include view titles, general notes text, or title block text
-
-If you find missing dimensions, return them as a JSON array of strings.
-If all dimensions are accounted for, return an empty array [].
-
-Return ONLY a JSON array, no markdown, no code fences."""
-
-
-def verify_coverage(image: Image.Image, view: ViewRegion, dims_in_view: list[ExtractedDimension],
-                    page_num: int, client) -> list[str]:
-    """Phase 4: Check a view for missed dimensions."""
-    if not dims_in_view:
-        return []
-
-    crop = image.crop(view.bbox)
-    b64 = _image_to_base64(crop)
-    texts = [d.value for d in dims_in_view]
-    text_list = "\n".join(f"- {t}" for t in texts)
-    prompt = _VERIFY_PROMPT.format(text_list=text_list)
-
-    try:
-        response = client.messages.create(
-            model=_MODEL,
-            max_tokens=1024,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": b64,
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-        )
-        raw = response.content[0].text.strip()
-        data = _parse_json_list(raw)
-        return [str(x) for x in data if x]
-    except (json.JSONDecodeError, KeyError):
-        return []
-
-
 # ── Helpers ──
 
 def _image_to_base64(img: Image.Image, quality: int = _JPEG_QUALITY) -> str:
@@ -426,18 +365,6 @@ def _image_to_base64(img: Image.Image, quality: int = _JPEG_QUALITY) -> str:
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
     return base64.standard_b64encode(buf.getvalue()).decode()
-
-
-def _parse_json_list(raw: str) -> list:
-    try:
-        data = json.loads(raw)
-        if isinstance(data, list):
-            return data
-    except (json.JSONDecodeError, ValueError):
-        pass
-    # Fallback: extract quoted strings
-    import re
-    return re.findall(r'"([^"]+)"', raw)
 
 
 def _parse_json_dict(raw: str) -> dict:

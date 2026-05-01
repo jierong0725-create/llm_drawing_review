@@ -1,6 +1,5 @@
 import os
 import threading
-from collections import defaultdict
 from datetime import datetime
 from typing import List
 
