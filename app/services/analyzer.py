@@ -19,6 +19,9 @@ from PIL import Image
 
 from .extractor import ExtractedDimension, _parse_nominal_tol, _infer_type
 
+from math import ceil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 try:
     import anthropic
     _ANTHROPIC_AVAILABLE = True
@@ -27,8 +30,63 @@ except ImportError:
 
 _RESOLUTION = 300
 _JPEG_QUALITY = 85
+_TARGET_MAX_TILES = 30
+_BASE_TILE_SIZE = 1400
+_BASE_OVERLAP = 200
 
 _MODEL = "claude-opus-4-7"
+
+
+def compute_tile_grid(w: int, h: int) -> tuple[list[tuple[int, int, int, int]], int]:
+    """Return (tiles, overlap). tiles are (x0, y0, x1, y1) in full-image pixels.
+
+    Tile size grows until the grid fits within _TARGET_MAX_TILES (handles A0).
+    """
+    tile_size = _BASE_TILE_SIZE
+    overlap = _BASE_OVERLAP
+    for t in range(_BASE_TILE_SIZE, 3100, 100):
+        stride = t - _BASE_OVERLAP
+        if ceil(w / stride) * ceil(h / stride) <= _TARGET_MAX_TILES:
+            tile_size = t
+            break
+    else:
+        tile_size = 3000
+        overlap = 300
+
+    stride = tile_size - overlap
+    tiles: list[tuple[int, int, int, int]] = []
+    for row in range(ceil(h / stride)):
+        for col in range(ceil(w / stride)):
+            x0 = col * stride
+            y0 = row * stride
+            x1 = min(x0 + tile_size, w)
+            y1 = min(y0 + tile_size, h)
+            tiles.append((x0, y0, x1, y1))
+    return tiles, overlap
+
+
+def _dedup(dims: list, radius: float) -> list:
+    """Remove duplicate dimensions within overlap zones.
+
+    Two dims are duplicates if their text matches and their centers are
+    within `radius` pixels of each other in full-image space.
+    """
+    kept: list = []
+    for d in dims:
+        if d.anchor_x is None or d.anchor_y is None:
+            kept.append(d)
+            continue
+        is_dup = any(
+            d.value == k.value
+            and k.anchor_x is not None
+            and k.anchor_y is not None
+            and abs(d.anchor_x - k.anchor_x) < radius
+            and abs(d.anchor_y - k.anchor_y) < radius
+            for k in kept
+        )
+        if not is_dup:
+            kept.append(d)
+    return kept
 
 
 @dataclass
