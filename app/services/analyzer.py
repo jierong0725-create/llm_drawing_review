@@ -303,6 +303,61 @@ def extract_view_dimensions(image: Image.Image, view: ViewRegion, page_num: int,
     return dims
 
 
+def extract_dimensions_tiled(
+    pdf_path: str,
+    excluded: list[ExcludedRegion],
+) -> list[ExtractedDimension]:
+    """Tile-based full-drawing LLM dimension extraction.
+
+    Splits the full-resolution drawing into overlapping tiles, extracts dimensions
+    from each tile in parallel, deduplicates overlap zones, then filters excluded
+    regions.
+    """
+    if not _ANTHROPIC_AVAILABLE:
+        return []
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return []
+
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        page_img = page.to_image(resolution=_RESOLUTION)
+        pil_img: Image.Image = page_img.original
+        w, h = pil_img.size
+
+    tiles, overlap = compute_tile_grid(w, h)
+    radius = overlap * 0.8
+    client = anthropic.Anthropic(api_key=api_key)
+
+    def _extract_tile(tile_bbox: tuple[int, int, int, int]) -> list[ExtractedDimension]:
+        dummy_view = ViewRegion(name="tile", bbox=tile_bbox, page=1)
+        return extract_view_dimensions(pil_img, dummy_view, 1, client)
+
+    all_dims: list[ExtractedDimension] = []
+    with ThreadPoolExecutor(max_workers=min(len(tiles), 8)) as executor:
+        futures = {executor.submit(_extract_tile, t): t for t in tiles}
+        for future in as_completed(futures):
+            try:
+                all_dims.extend(future.result())
+            except Exception:
+                pass
+
+    all_dims = _dedup(all_dims, radius)
+
+    if excluded:
+        all_dims = [
+            d for d in all_dims
+            if not any(
+                e.bbox[0] <= (d.anchor_x or -1) <= e.bbox[2]
+                and e.bbox[1] <= (d.anchor_y or -1) <= e.bbox[3]
+                for e in excluded
+            )
+        ]
+
+    return all_dims
+
+
 # ── Phase 4: Verification loop ──
 
 _VERIFY_PROMPT = """You are an expert at reading mechanical engineering drawings.
