@@ -56,55 +56,10 @@ function SegmentedFilter({ value, onChange }) {
   );
 }
 
-function NewPartModal({ isOpen, onClose, onCreated }) {
-  const [name, setName] = useState("");
-  const [drawingNumber, setDrawingNumber] = useState("");
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError(""); setSubmitting(true);
-    const fd = new FormData();
-    fd.append("name", name); fd.append("drawing_number", drawingNumber);
-    try {
-      const resp = await fetch("/parts/api/create", { method: "POST", body: fd });
-      if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "创建失败"); }
-      onCreated(await resp.json());
-      setName(""); setDrawingNumber(""); onClose();
-    } catch (err) { setError(err.message); }
-    finally { setSubmitting(false); }
-  };
-
-  if (!isOpen) return null;
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "var(--bg-surface)", borderRadius: 4, padding: 24, width: 420, maxWidth: "90vw", border: "1px solid var(--border-color)", boxShadow: "var(--shadow-card)" }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 16, fontFamily: "var(--font-display)" }}>新增零件</h2>
-        <form onSubmit={handleSubmit}>
-          {[["零件名称", name, setName, "例：发动机缸体"], ["图号", drawingNumber, setDrawingNumber, "例：ENG-001-A"]].map(([label, val, setter, ph]) => (
-            <div key={label} style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", fontSize: 11, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</label>
-              <input value={val} onChange={e => setter(e.target.value)} placeholder={ph} required
-                style={{ width: "100%", padding: "6px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 13, outline: "none" }} />
-            </div>
-          ))}
-          {error && <div style={{ color: "var(--signal-red)", fontSize: 12, marginBottom: 8 }}>{error}</div>}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-            <button type="button" onClick={onClose} style={{ padding: "6px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink-secondary)", cursor: "pointer", fontSize: 13 }}>取消</button>
-            <button type="submit" disabled={submitting} style={{ padding: "6px 16px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: submitting ? 0.5 : 1 }}>{submitting ? "创建中..." : "创建零件"}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
 function App() {
   const [parts, setParts] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [modalOpen, setModalOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
 
   useEffect(() => { fetch("/parts/api/list").then(r => r.json()).then(setParts); }, []);
@@ -118,17 +73,14 @@ function App() {
     return matchSearch && matchStatus;
   });
 
-  const handleRowClick = p => {
-    const v = p.current_version;
-    window.location.href = v ? `/parts/${p.id}/versions/${v.id}/review` : `/parts/${p.id}`;
-  };
+  const handleRowClick = p => { window.location.href = `/parts/${p.id}`; };
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <AppShell
         breadcrumbs={[{ label: "零件列表" }]}
         actions={
-          <button onClick={() => setModalOpen(true)} style={{ padding: "5px 14px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+          <button onClick={() => { window.location.href = "/parts/new"; }} style={{ padding: "5px 14px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
             + 新增零件
           </button>
         }
@@ -196,7 +148,6 @@ function App() {
           </table>
         </div>
       </AppShell>
-      <NewPartModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={() => fetch("/parts/api/list").then(r => r.json()).then(setParts)} />
     </div>
   );
 }

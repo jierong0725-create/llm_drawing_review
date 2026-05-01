@@ -89,15 +89,31 @@ def create_part_json(
     }, status_code=201)
 
 
+@router.get("/new", response_class=HTMLResponse)
+def new_part_page(request: Request):
+    return templates.TemplateResponse(request, "part_detail.html", {"title": "新增零件"})
+
+
+@router.get("/api/{part_id}")
+def part_detail_json(part_id: int, db: Session = Depends(get_db)):
+    part = db.query(Part).filter(Part.id == part_id).first()
+    if not part:
+        raise HTTPException(status_code=404)
+    return {
+        "id": part.id, "name": part.name, "drawing_number": part.drawing_number,
+        "current_version": _get_current_version_info(part),
+        "created_at": part.created_at.strftime("%Y-%m-%d %H:%M") if part.created_at else None,
+    }
+
+
 @router.get("/{part_id}", response_class=HTMLResponse)
 def part_detail(request: Request, part_id: int, db: Session = Depends(get_db)):
     part = db.query(Part).filter(Part.id == part_id).first()
     if not part:
         raise HTTPException(status_code=404)
-    current = next((v for v in part.versions if v.is_current), None)
-    if current:
-        return RedirectResponse(url=f"/parts/{part_id}/versions/{current.id}/review")
-    return RedirectResponse(url="/parts/")
+    return templates.TemplateResponse(request, "part_detail.html", {
+        "title": f"{part.name} — 零件详情",
+    })
 
 
 @router.post("/{part_id}/versions", response_class=HTMLResponse)
