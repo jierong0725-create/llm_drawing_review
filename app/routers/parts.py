@@ -16,10 +16,10 @@ from ..models import (
     Part, Version, Drawing, Dimension,
     ProcessingStatus, ConfirmResult, DimensionSource, DimensionType,
 )
-from ..services.extractor import extract_from_pdf, filter_by_views
+from ..services.extractor import extract_from_pdf, filter_by_views, filter_excluded
 from ..services.vision import vision_check
 from ..services.reconciler import reconcile
-from ..services.analyzer import analyze_structure, extract_view_dimensions, verify_coverage, StructureResult
+from ..services.analyzer import detect_excluded_regions, extract_dimensions_tiled
 from ..services.image_gen import generate_drawing_images, RASTER_DPI
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "drawings")
@@ -176,13 +176,12 @@ def create_version(
 
 
 def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> None:
-    """Background task: 4-phase view-aware dimension extraction pipeline.
+    """Background task: tile-based dimension extraction pipeline.
 
-    Phase 1: LLM structural analysis → views + excluded regions
-    Phase 2a: pdfplumber extraction + view filtering
-    Phase 2b: Per-view LLM extraction (replaces 3×3 grid)
-    Phase 3: View-aware reconcile + per-view sequence numbering
-    Phase 4: Verification loop (missing dimension check)
+    Phase 1: Detect excluded regions (title block, tolerance notes, etc.)
+    Phase 2a: pdfplumber text extraction + filter excluded
+    Phase 2b: Tile-based LLM extraction (full-res, parallel)
+    Phase 3: Reconcile + global sequence numbering
     """
     PDF_SCALE = RASTER_DPI / 72.0  # PDF points → image pixels
     db: Session = SessionLocal()
@@ -196,37 +195,25 @@ def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> N
     try:
         for drawing_id, pdf_path in drawing_paths:
             try:
-                # Phase 1: Structural analysis
-                structure = StructureResult(views=[], excluded=[])
+                # Phase 1: Detect excluded regions (title block, tolerance notes, etc.)
+                excluded = []
                 if _ANTHROPIC_OK:
-                    structure = analyze_structure(pdf_path)
+                    excluded = detect_excluded_regions(pdf_path)
 
-                # Phase 2a: Program extraction + view filtering
+                # Phase 2a: pdfplumber text extraction + filter excluded
                 program_dims = extract_from_pdf(pdf_path)
-                if structure.views:
-                    program_dims = filter_by_views(program_dims, structure.views, structure.excluded)
+                program_dims = filter_excluded(program_dims, excluded, is_pixels=False)
 
-                # Phase 2b: Per-view LLM extraction (replaces old 3×3 grid)
+                # Phase 2b: Tile-based LLM extraction (full-res, parallel)
                 llm_dims: list = []
-                if structure.views and _ANTHROPIC_OK:
-                    client = anthropic.Anthropic()
-                    with pdfplumber.open(pdf_path) as pdf:
-                        for page_num, page in enumerate(pdf.pages, start=1):
-                            page_img = page.to_image(resolution=300)
-                            pil_img = page_img.original
-                            for view in [v for v in structure.views if v.page == page_num]:
-                                view_dims = extract_view_dimensions(pil_img, view, page_num, client)
-                                llm_dims.extend(view_dims)
+                if _ANTHROPIC_OK:
+                    llm_dims = extract_dimensions_tiled(pdf_path, excluded)
 
-                # Phase 3: Reconcile with view awareness
-                final_dims = reconcile(program_dims, llm_dims, structure.views if structure.views else None)
+                # Phase 3: Reconcile
+                final_dims = reconcile(program_dims, llm_dims, views=None)
 
-                # Per-view sequence numbering
-                view_seq: dict[str, int] = defaultdict(int)
-                for dim in final_dims:
-                    view_key = dim.view_name or "_nogroup"
-                    view_seq[view_key] += 1
-                    seq = view_seq[view_key]
+                # Sequence numbering (global, no view grouping)
+                for seq, dim in enumerate(final_dims, start=1):
                     record = Dimension(
                         drawing_id=drawing_id,
                         sequence=seq,
@@ -234,30 +221,13 @@ def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> N
                         nominal=dim.nominal,
                         tolerance=dim.tolerance,
                         dim_type=DimensionType(dim.dim_type),
-                        view_name=dim.view_name,
+                        view_name=None,
                         source=DimensionSource(dim.source),
                         anchor_x=dim.anchor_x * PDF_SCALE if dim.anchor_x is not None else None,
                         anchor_y=dim.anchor_y * PDF_SCALE if dim.anchor_y is not None else None,
                     )
                     db.add(record)
                 db.commit()
-
-                # Phase 4: Verification loop
-                if structure.views and _ANTHROPIC_OK:
-                    client = anthropic.Anthropic()
-                    with pdfplumber.open(pdf_path) as pdf:
-                        for page_num, page in enumerate(pdf.pages, start=1):
-                            page_img = page.to_image(resolution=300)
-                            pil_img = page_img.original
-                            for view in [v for v in structure.views if v.page == page_num]:
-                                dims_in_view = [d for d in final_dims if d.view_name == view.name]
-                                missing = verify_coverage(pil_img, view, dims_in_view, page_num, client)
-                                if missing:
-                                    version = db.query(Version).filter(Version.id == version_id).first()
-                                    if version:
-                                        note = f"[Phase 4] {view.name} 可能遗漏: {', '.join(missing)}"
-                                        version.notes = (version.notes or "") + f"\n{note}"
-                                        db.commit()
 
                 # Generate JPG images for web review
                 output_dir = os.path.join(STATIC_DIR, str(drawing_id))
