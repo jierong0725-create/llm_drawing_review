@@ -1,46 +1,59 @@
 {% extends "spa.html" %}
 {% block scripts %}
-<script type="text/babel" src="/static/jsx/app_shell.jsx"></script>
-<script type="text/babel" src="/static/jsx/status_dot.jsx"></script>
-<script type="text/babel" src="/static/jsx/data_table.jsx"></script>
 <script type="text/babel">
 const { useState, useEffect } = React;
 
-function SearchFilter({ search, onSearchChange, statusFilter, onStatusChange }) {
-  return React.createElement("div", { style: searchStyles.wrapper },
-    React.createElement("input", {
-      type: "text", placeholder: "搜索零件名称或图号...",
-      value: search, onChange: (e) => onSearchChange(e.target.value),
-      style: searchStyles.input,
-    }),
-    React.createElement("select", {
-      value: statusFilter, onChange: (e) => onStatusChange(e.target.value),
-      style: searchStyles.select,
-    },
-      React.createElement("option", { value: "all" }, "全部状态"),
-      React.createElement("option", { value: "ready" }, "就绪"),
-      React.createElement("option", { value: "processing" }, "处理中"),
-      React.createElement("option", { value: "pending" }, "待处理"),
-      React.createElement("option", { value: "confirmed" }, "已确认"),
-    )
+function SummaryStrip({ parts }) {
+  const totalPending = parts.reduce((a, p) => a + (p.pending_count || 0), 0);
+  const totalReady = parts.filter(p => p.current_version?.status === "ready").length;
+  const totalProcessing = parts.filter(p => p.current_version?.status === "processing").length;
+  const stats = [
+    { label: "全部零件", value: parts.length, color: "var(--ink)" },
+    { label: "待审标注", value: totalPending, color: "var(--signal-amber)" },
+    { label: "可审核", value: totalReady, color: "var(--signal-green)" },
+    { label: "处理中", value: totalProcessing, color: "var(--accent-primary)" },
+  ];
+  return (
+    <div style={{
+      display: "flex", background: "var(--bg-surface)",
+      borderBottom: "1px solid var(--border-color)", padding: "0 20px",
+    }}>
+      {stats.map((s, i) => (
+        <div key={i} style={{
+          padding: "10px 24px", borderRight: "1px solid var(--border-color)",
+          display: "flex", flexDirection: "column", gap: 2,
+        }}>
+          <span style={{ fontSize: 10, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</span>
+          <span style={{ fontSize: 20, fontWeight: 700, color: s.color, fontFamily: "var(--font-mono)" }}>{s.value}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
-const searchStyles = {
-  wrapper: { display: "flex", gap: "var(--space-12)", marginBottom: "var(--space-16)" },
-  input: {
-    flex: 1, padding: "6px 12px",
-    background: "var(--bg-surface)", border: "1px solid var(--border-color)",
-    borderRadius: "var(--radius)", color: "var(--ink)", fontSize: 13,
-    outline: "none",
-  },
-  select: {
-    padding: "6px 12px",
-    background: "var(--bg-surface)", border: "1px solid var(--border-color)",
-    borderRadius: "var(--radius)", color: "var(--ink)", fontSize: 13,
-    outline: "none", cursor: "pointer",
-  },
-};
+const FILTER_OPTIONS = [
+  { value: "all", label: "全部" },
+  { value: "ready", label: "就绪" },
+  { value: "processing", label: "处理中" },
+  { value: "confirmed", label: "已确认" },
+  { value: "pending", label: "待上传" },
+];
+
+function SegmentedFilter({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 2, background: "var(--bg-elevated)", borderRadius: 4, padding: 2 }}>
+      {FILTER_OPTIONS.map(opt => (
+        <button key={opt.value} onClick={() => onChange(opt.value)} style={{
+          padding: "4px 10px", borderRadius: 3, border: "none", cursor: "pointer", fontSize: 11,
+          background: value === opt.value ? "var(--bg-surface)" : "transparent",
+          color: value === opt.value ? "var(--ink)" : "var(--ink-secondary)",
+          boxShadow: value === opt.value ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+          transition: "all 0.15s",
+        }}>{opt.label}</button>
+      ))}
+    </div>
+  );
+}
 
 function NewPartModal({ isOpen, onClose, onCreated }) {
   const [name, setName] = useState("");
@@ -50,223 +63,143 @@ function NewPartModal({ isOpen, onClose, onCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
-    setSubmitting(true);
-    const formData = new FormData();
-    formData.append("name", name);
-    formData.append("drawing_number", drawingNumber);
+    setError(""); setSubmitting(true);
+    const fd = new FormData();
+    fd.append("name", name); fd.append("drawing_number", drawingNumber);
     try {
-      const resp = await fetch("/parts/api/create", { method: "POST", body: formData });
-      if (!resp.ok) {
-        const data = await resp.json();
-        throw new Error(data.detail || "创建失败");
-      }
-      const part = await resp.json();
-      onCreated(part);
+      const resp = await fetch("/parts/api/create", { method: "POST", body: fd });
+      if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "创建失败"); }
+      onCreated(await resp.json());
       setName(""); setDrawingNumber(""); onClose();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
+    } catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
   };
 
   if (!isOpen) return null;
-
-  return React.createElement("div", { style: modalStyles.overlay, onClick: onClose },
-    React.createElement("div", { style: modalStyles.dialog, onClick: (e) => e.stopPropagation() },
-      React.createElement("h2", { style: modalStyles.title }, "新增零件"),
-      React.createElement("form", { onSubmit: handleSubmit },
-        React.createElement("div", { style: modalStyles.field },
-          React.createElement("label", { style: modalStyles.label }, "零件名称"),
-          React.createElement("input", {
-            type: "text", value: name, onChange: (e) => setName(e.target.value),
-            style: modalStyles.input, placeholder: "例：发动机缸体", required: true,
-          })
-        ),
-        React.createElement("div", { style: modalStyles.field },
-          React.createElement("label", { style: modalStyles.label }, "图号"),
-          React.createElement("input", {
-            type: "text", value: drawingNumber, onChange: (e) => setDrawingNumber(e.target.value),
-            style: modalStyles.input, placeholder: "例：ENG-001-A", required: true,
-          })
-        ),
-        error && React.createElement("div", { style: modalStyles.error }, error),
-        React.createElement("div", { style: modalStyles.actions },
-          React.createElement("button", {
-            type: "button", onClick: onClose, style: modalStyles.cancelBtn,
-          }, "取消"),
-          React.createElement("button", {
-            type: "submit", disabled: submitting,
-            style: { ...modalStyles.submitBtn, opacity: submitting ? 0.5 : 1 },
-          }, submitting ? "创建中..." : "创建零件"),
-        )
-      )
-    )
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "var(--bg-surface)", borderRadius: 4, padding: 24, width: 420, maxWidth: "90vw", border: "1px solid var(--border-color)", boxShadow: "var(--shadow-card)" }}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 16, fontFamily: "var(--font-display)" }}>新增零件</h2>
+        <form onSubmit={handleSubmit}>
+          {[["零件名称", name, setName, "例：发动机缸体"], ["图号", drawingNumber, setDrawingNumber, "例：ENG-001-A"]].map(([label, val, setter, ph]) => (
+            <div key={label} style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 11, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</label>
+              <input value={val} onChange={e => setter(e.target.value)} placeholder={ph} required
+                style={{ width: "100%", padding: "6px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 13, outline: "none" }} />
+            </div>
+          ))}
+          {error && <div style={{ color: "var(--signal-red)", fontSize: 12, marginBottom: 8 }}>{error}</div>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+            <button type="button" onClick={onClose} style={{ padding: "6px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink-secondary)", cursor: "pointer", fontSize: 13 }}>取消</button>
+            <button type="submit" disabled={submitting} style={{ padding: "6px 16px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: submitting ? 0.5 : 1 }}>{submitting ? "创建中..." : "创建零件"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
-
-const modalStyles = {
-  overlay: {
-    position: "fixed", inset: 0, zIndex: 100,
-    background: "rgba(0,0,0,0.6)", display: "flex",
-    alignItems: "center", justifyContent: "center",
-  },
-  dialog: {
-    background: "var(--bg-elevated)", borderRadius: "var(--radius)",
-    padding: "var(--space-24)", width: 420, maxWidth: "90vw",
-    border: "1px solid var(--border-color)",
-  },
-  title: {
-    fontSize: 15, fontWeight: 600, color: "var(--ink)",
-    marginBottom: "var(--space-16)", fontFamily: "var(--font-display)",
-  },
-  field: { marginBottom: "var(--space-12)" },
-  label: {
-    display: "block", fontSize: 11, color: "var(--ink-secondary)",
-    textTransform: "uppercase", letterSpacing: "0.05em",
-    marginBottom: "var(--space-4)",
-  },
-  input: {
-    width: "100%", padding: "6px 10px",
-    background: "var(--bg-surface)", border: "1px solid var(--border-color)",
-    borderRadius: "var(--radius)", color: "var(--ink)", fontSize: 13,
-    outline: "none", boxSizing: "border-box",
-  },
-  error: {
-    color: "var(--signal-red)", fontSize: 12, marginBottom: "var(--space-8)",
-  },
-  actions: { display: "flex", gap: "var(--space-8)", justifyContent: "flex-end", marginTop: "var(--space-16)" },
-  cancelBtn: {
-    padding: "6px 16px", background: "transparent", border: "1px solid var(--border-color)",
-    borderRadius: "var(--radius)", color: "var(--ink-secondary)", cursor: "pointer", fontSize: 13,
-  },
-  submitBtn: {
-    padding: "6px 16px", background: "var(--accent-primary)", border: "none",
-    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
-    fontSize: 13, fontWeight: 600,
-  },
-};
 
 function App() {
   const [parts, setParts] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
 
-  const fetchParts = () => {
-    fetch("/parts/api/list").then((r) => r.json()).then(setParts);
-  };
+  useEffect(() => { fetch("/parts/api/list").then(r => r.json()).then(setParts); }, []);
 
-  useEffect(() => { fetchParts(); }, []);
-
-  const filtered = parts.filter((p) => {
+  const filtered = parts.filter(p => {
     const q = search.toLowerCase();
-    const matchesSearch = !q || p.name.toLowerCase().includes(q) || p.drawing_number.toLowerCase().includes(q);
+    const matchSearch = !q || p.name.toLowerCase().includes(q) || p.drawing_number.toLowerCase().includes(q);
     const v = p.current_version;
-    let matchesStatus = true;
-    if (statusFilter !== "all" && v) {
-      matchesStatus = v.status === statusFilter;
-    } else if (statusFilter !== "all" && !v) {
-      matchesStatus = statusFilter === "pending";
-    }
-    return matchesSearch && matchesStatus;
+    const matchStatus = statusFilter === "all"
+      || (v ? v.status === statusFilter : statusFilter === "pending");
+    return matchSearch && matchStatus;
   });
 
-  const handleRowClick = (row) => {
-    const v = row.current_version;
-    if (v) {
-      window.location.href = `/parts/${row.id}/versions/${v.id}/review`;
-    } else {
-      window.location.href = `/parts/${row.id}`;
-    }
+  const handleRowClick = p => {
+    const v = p.current_version;
+    window.location.href = v ? `/parts/${p.id}/versions/${v.id}/review` : `/parts/${p.id}`;
   };
 
-  const statusLabelMap = {
-    pending: "待处理", processing: "处理中", ready: "就绪", confirmed: "已确认",
-  };
-
-  const columns = [
-    { key: "drawing_number", label: "图号" },
-    { key: "name", label: "零件名称" },
-    {
-      key: "current_version",
-      label: "当前版本",
-      render: (v) => v ? React.createElement("span", {
-        style: { fontFamily: "var(--font-mono)", fontSize: 12 }
-      }, v.version_code) : React.createElement("span", { style: { color: "var(--ink-disabled)" } }, "—"),
-    },
-    {
-      key: "current_version",
-      label: "状态",
-      render: (v) => {
-        if (!v) return React.createElement("span", { style: { color: "var(--ink-disabled)" } }, "待上传");
-        const status = v.status;
-        const label = statusLabelMap[status] || status;
-        return React.createElement(window.StatusDot || "span", { status, label, pulse: status === "processing" });
-      },
-    },
-    {
-      key: "pending_count",
-      label: "待审/总计",
-      render: (val, row) => React.createElement("span", { style: { fontFamily: "var(--font-mono)" } },
-        `${val} / ${row.total_count}`),
-    },
-    {
-      key: "created_at",
-      label: "创建时间",
-      render: (val) => React.createElement("span", { style: { color: "var(--ink-secondary)", fontSize: 12 } }, val),
-    },
-  ];
-
-  return React.createElement("div", { style: pageStyles.wrapper },
-    React.createElement(window.AppShell, {
-      breadcrumbs: [{ label: "零件列表" }],
-    },
-      React.createElement("div", { style: pageStyles.content },
-        React.createElement("div", { style: pageStyles.header },
-          React.createElement("h1", { style: pageStyles.pageTitle }, "零件列表"),
-          React.createElement("button", {
-            onClick: () => setModalOpen(true),
-            style: pageStyles.addBtn,
-          }, "+ 新增零件"),
-        ),
-        React.createElement(SearchFilter, {
-          search, onSearchChange: setSearch,
-          statusFilter, onStatusChange: setStatusFilter,
-        }),
-        React.createElement(window.DataTable, {
-          columns, data: filtered, onRowClick: handleRowClick,
-          emptyText: "暂无零件，点击上方按钮新增",
-        }),
-      ),
-    ),
-    React.createElement(NewPartModal, {
-      isOpen: modalOpen, onClose: () => setModalOpen(false),
-      onCreated: () => fetchParts(),
-    }),
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <AppShell
+        breadcrumbs={[{ label: "零件列表" }]}
+        actions={
+          <button onClick={() => setModalOpen(true)} style={{ padding: "5px 14px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            + 新增零件
+          </button>
+        }
+      >
+        <SummaryStrip parts={parts} />
+        <div style={{ display: "flex", gap: 12, padding: "10px 20px", background: "var(--bg-canvas)", borderBottom: "1px solid var(--border-color)", alignItems: "center" }}>
+          <div style={{ position: "relative", flex: 1, maxWidth: 340 }}>
+            <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--ink-disabled)" }} width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <circle cx="5.5" cy="5.5" r="4.5" stroke="currentColor" strokeWidth="1.3"/>
+              <line x1="9.5" y1="9.5" x2="12" y2="12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+            </svg>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索零件名称或图号…"
+              style={{ width: "100%", padding: "6px 10px 6px 30px", background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--ink)", fontSize: 12, outline: "none" }} />
+          </div>
+          <SegmentedFilter value={statusFilter} onChange={setStatusFilter} />
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--ink-disabled)", fontFamily: "monospace" }}>{filtered.length} / {parts.length} 条</span>
+        </div>
+        <div style={{ flex: 1, overflow: "auto", padding: "0 20px 20px" }}>
+          <table className="industrial" style={{ marginTop: 12 }}>
+            <thead>
+              <tr>
+                <th>图号</th><th>零件名称</th><th>当前版本</th><th>状态</th>
+                <th>待审 / 总计</th><th>审核进度</th><th>创建时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0
+                ? <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--ink-disabled)", padding: 40 }}>暂无数据</td></tr>
+                : filtered.map(p => {
+                    const pct = p.total_count > 0 ? Math.round(((p.total_count - p.pending_count) / p.total_count) * 100) : 0;
+                    return (
+                      <tr key={p.id} className={selectedId === p.id ? "selected" : ""} onClick={() => { setSelectedId(p.id); handleRowClick(p); }}>
+                        <td><span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--ink-secondary)" }}>{p.drawing_number}</span></td>
+                        <td><span style={{ fontWeight: 600 }}>{p.name}</span></td>
+                        <td>{p.current_version
+                          ? <span style={{ fontFamily: "monospace", fontSize: 11 }}>{p.current_version.version_code}</span>
+                          : <span style={{ color: "var(--ink-disabled)" }}>—</span>}
+                        </td>
+                        <td>{p.current_version
+                          ? <StatusDot status={p.current_version.status} pulse={p.current_version.status === "processing"} />
+                          : <StatusDot status="pending" label="待上传" />}
+                        </td>
+                        <td>
+                          <span style={{ fontFamily: "monospace", fontSize: 12 }}>
+                            <span style={{ color: p.pending_count > 0 ? "var(--signal-amber)" : "var(--signal-green)" }}>{p.pending_count}</span>
+                            <span style={{ color: "var(--ink-disabled)" }}> / {p.total_count}</span>
+                          </span>
+                        </td>
+                        <td style={{ width: 120 }}>
+                          {p.total_count > 0 ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div className="progress-track" style={{ flex: 1, height: 4 }}>
+                                <div className="progress-fill" style={{ width: `${pct}%`, background: pct === 100 ? "var(--signal-green)" : "var(--accent-primary)" }} />
+                              </div>
+                              <span style={{ fontSize: 10, fontFamily: "monospace", color: "var(--ink-secondary)", minWidth: 28 }}>{pct}%</span>
+                            </div>
+                          ) : <span style={{ color: "var(--ink-disabled)", fontSize: 11 }}>—</span>}
+                        </td>
+                        <td><span style={{ color: "var(--ink-secondary)", fontSize: 11 }}>{p.created_at}</span></td>
+                      </tr>
+                    );
+                  })
+              }
+            </tbody>
+          </table>
+        </div>
+      </AppShell>
+      <NewPartModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onCreated={() => fetch("/parts/api/list").then(r => r.json()).then(setParts)} />
+    </div>
   );
 }
 
-const pageStyles = {
-  wrapper: { height: "100%", display: "flex", flexDirection: "column" },
-  content: { flex: 1, padding: "var(--space-24)", overflow: "auto" },
-  header: {
-    display: "flex", justifyContent: "space-between", alignItems: "center",
-    marginBottom: "var(--space-16)",
-  },
-  pageTitle: {
-    fontSize: 18, fontWeight: 600, fontFamily: "var(--font-display)",
-    color: "var(--ink)", letterSpacing: "0.02em",
-  },
-  addBtn: {
-    padding: "6px 16px", background: "var(--accent-primary)", border: "none",
-    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
-    fontSize: 13, fontWeight: 600,
-  },
-};
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(React.createElement(App));
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 {% endblock %}
