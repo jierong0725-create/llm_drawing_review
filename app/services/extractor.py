@@ -317,3 +317,34 @@ def filter_by_views(
         filtered.append(replace(dim, view_name=view_name))
 
     return filtered
+
+
+def filter_excluded(
+    dims: list[ExtractedDimension],
+    excluded: list,
+    *,
+    is_pixels: bool = False,
+) -> list[ExtractedDimension]:
+    """Filter dims whose anchor falls in any excluded region.
+
+    anchor coords are in PDF points when is_pixels=False,
+    or 300-DPI image pixels when is_pixels=True.
+    excluded bboxes are always in 300-DPI image pixels.
+    """
+    if not excluded:
+        return dims
+    scale = 1.0 if is_pixels else PDF_SCALE
+    result = []
+    for d in dims:
+        if d.anchor_x is None or d.anchor_y is None:
+            result.append(d)
+            continue
+        px = d.anchor_x * scale
+        py = d.anchor_y * scale
+        in_exc = any(
+            e.bbox[0] <= px <= e.bbox[2] and e.bbox[1] <= py <= e.bbox[3]
+            for e in excluded
+        )
+        if not in_exc:
+            result.append(d)
+    return result
