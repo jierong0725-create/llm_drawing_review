@@ -37,6 +37,7 @@ class ReviewStatus(str, enum.Enum):
     pending = "pending"
     confirmed = "confirmed"
     questionable = "questionable"
+    rejected = "rejected"
 
 
 class Part(Base):
