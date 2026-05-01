@@ -3,6 +3,8 @@
 import os
 import pdfplumber
 
+RASTER_DPI = 300
+
 
 def generate_drawing_images(drawing_id: int, pdf_path: str, output_dir: str) -> list[str]:
     """Rasterise each page of a PDF to JPG. Returns list of JPG filenames."""
@@ -11,7 +13,7 @@ def generate_drawing_images(drawing_id: int, pdf_path: str, output_dir: str) -> 
 
     with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
-            img = page.to_image(resolution=300)
+            img = page.to_image(resolution=RASTER_DPI)
             jpg_name = f"page_{page_num}.jpg"
             jpg_path = os.path.join(output_dir, jpg_name)
             pil_img = img.original.convert("RGB")
