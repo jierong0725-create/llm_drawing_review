@@ -2,6 +2,7 @@
 {% block scripts %}
 <script type="text/babel" src="/static/jsx/marker_label.jsx"></script>
 <script type="text/babel">
+{% raw %}
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 const pathParts = window.location.pathname.split("/");
@@ -461,5 +462,6 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+{% endraw %}
 </script>
 {% endblock %}

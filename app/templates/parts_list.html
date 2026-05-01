@@ -1,6 +1,7 @@
 {% extends "spa.html" %}
 {% block scripts %}
 <script type="text/babel">
+{% raw %}
 const { useState, useEffect } = React;
 
 function SummaryStrip({ parts }) {
@@ -201,5 +202,6 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+{% endraw %}
 </script>
 {% endblock %}
