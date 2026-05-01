@@ -25,7 +25,7 @@ try:
 except ImportError:
     _ANTHROPIC_AVAILABLE = False
 
-from .extractor import ExtractedDimension, _classify, _parse_nominal_tol
+from .extractor import ExtractedDimension, _classify, _parse_nominal_tol, _infer_type
 
 _RESOLUTION = 300   # DPI for rasterisation
 _GRID = 3           # 3×3 grid
@@ -157,21 +157,3 @@ def _parse_json_list(raw: str) -> list[str]:
     # Fallback: extract quoted strings
     import re
     return re.findall(r'"([^"]+)"', raw)
-
-
-def _infer_type(text: str) -> str:
-    t = text.strip()
-    if any(t.startswith(c) for c in ("⌀", "Φ", "φ", "Ø", "ø")):
-        return "diameter"
-    if t.upper().startswith("R") and not t.upper().startswith("RA") and not t.upper().startswith("RZ"):
-        return "radius"
-    if "°" in t:
-        return "angle"
-    if any(sym in t for sym in ("⊕", "⊘", "○", "□", "◎", "⌖", "⊥", "∥", "∠", "↗")):
-        return "gdt"
-    lower = t.lower()
-    if lower.startswith("ra") or lower.startswith("rz"):
-        return "roughness"
-    if t.startswith("(") and t.endswith(")"):
-        return "reference"
-    return "linear"

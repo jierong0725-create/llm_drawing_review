@@ -488,6 +488,27 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
   const selectedDim = dims.find(d => d.id === selectedDimId);
   const msgs = selectedDim ? (messages[selectedDim.id] || []) : [];
 
+  // Group dimensions by view_name for view-aware display
+  const viewGroups = useMemo(() => {
+    const groups = {};
+    for (const d of filtered) {
+      const key = d.view_name || "未归属";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(d);
+    }
+    // Preserve first-appearance order from filtered list
+    const order = [];
+    const seen = new Set();
+    for (const d of filtered) {
+      const key = d.view_name || "未归属";
+      if (!seen.has(key)) {
+        seen.add(key);
+        order.push(key);
+      }
+    }
+    return order.map(name => ({ name, dims: groups[name] }));
+  }, [filtered]);
+
   useEffect(() => {
     if (!selectedDimId) return;
     fetch(`/api/dimensions/${selectedDimId}/messages`).then(r => r.json()).then(data => {
@@ -526,27 +547,42 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
       <div style={{ flex:"0 0 auto", maxHeight:220, overflowY:"auto" }}>
         {filtered.length === 0
           ? <div style={{ padding:20, textAlign:"center", color:"var(--ink-disabled)", fontSize:11 }}>暂无标注</div>
-          : filtered.map(d => (
-            <div key={d.id} onClick={() => onSelectDim(d.id)} style={{
-              display:"flex", alignItems:"center", gap:8,
-              padding:"7px 12px", cursor:"pointer",
-              background: d.id === selectedDimId ? "var(--bg-selected)" : "transparent",
-              borderBottom:"1px solid var(--border-color)", transition:"background 0.1s",
-            }}>
-              <span style={{
-                width:20, height:20, borderRadius:3, flexShrink:0,
-                background: STATUS_COLOR[d.review_status] || STATUS_COLOR.pending,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                fontSize:9, fontWeight:700, color:"#fff", fontFamily:"var(--font-mono)",
-              }}>{d.sequence}</span>
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:12, flex:1, color:"var(--ink)" }}>{d.value}</span>
-              {d.message_count > 0 && (
-                <span style={{ fontSize:9, background:"var(--accent-primary)", color:"#1a1a1a",
-                  borderRadius:2, minWidth:15, height:15,
-                  display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700,
-                }}>{d.message_count}</span>
-              )}
-              {showAI && d.ai_suggestion && <span style={{ fontSize:9, color:"var(--accent-primary)", fontWeight:700 }}>AI</span>}
+          : viewGroups.map(group => (
+            <div key={group.name}>
+              <div style={{
+                padding:"6px 14px", fontSize:10, fontWeight:600,
+                color:"var(--ink-secondary)", textTransform:"uppercase",
+                letterSpacing:"0.06em",
+                background:"var(--bg-elevated)", borderBottom:"1px solid var(--border-color)",
+                display:"flex", alignItems:"center", gap:6,
+              }}>
+                <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1" stroke="currentColor" fill="none" strokeWidth="1"/></svg>
+                {group.name}
+                <span style={{ marginLeft:"auto", color:"var(--ink-disabled)" }}>{group.dims.length}</span>
+              </div>
+              {group.dims.map(d => (
+                <div key={d.id} onClick={() => onSelectDim(d.id)} style={{
+                  display:"flex", alignItems:"center", gap:8,
+                  padding:"7px 12px", cursor:"pointer",
+                  background: d.id === selectedDimId ? "var(--bg-selected)" : "transparent",
+                  borderBottom:"1px solid var(--border-color)", transition:"background 0.1s",
+                }}>
+                  <span style={{
+                    width:20, height:20, borderRadius:3, flexShrink:0,
+                    background: STATUS_COLOR[d.review_status] || STATUS_COLOR.pending,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:9, fontWeight:700, color:"#fff", fontFamily:"var(--font-mono)",
+                  }}>{d.sequence}</span>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:12, flex:1, color:"var(--ink)" }}>{d.value}</span>
+                  {d.message_count > 0 && (
+                    <span style={{ fontSize:9, background:"var(--accent-primary)", color:"#1a1a1a",
+                      borderRadius:2, minWidth:15, height:15,
+                      display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700,
+                    }}>{d.message_count}</span>
+                  )}
+                  {showAI && d.ai_suggestion && <span style={{ fontSize:9, color:"var(--accent-primary)", fontWeight:700 }}>AI</span>}
+                </div>
+              ))}
             </div>
           ))
         }

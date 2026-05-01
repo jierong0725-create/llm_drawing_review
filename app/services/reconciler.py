@@ -26,8 +26,14 @@ from .extractor import ExtractedDimension
 def reconcile(
     program_dims: list[ExtractedDimension],
     llm_dims: list[ExtractedDimension],
+    views: list | None = None,
 ) -> list[ExtractedDimension]:
-    """Merge two lists into a deduplicated, spatially sorted authoritative list."""
+    """Merge two lists into a deduplicated, spatially sorted authoritative list.
+
+    When views are provided, sorting is view-aware: dimensions are grouped by
+    view in document order, then sorted by position within each view. Dims
+    without a view_name are placed last.
+    """
 
     reconciled: list[ExtractedDimension] = list(program_dims)  # program dims are primary
 
@@ -35,12 +41,22 @@ def reconcile(
         if not _has_match(llm_dim, reconciled):
             reconciled.append(llm_dim)
 
-    # Sort: page first, then top-to-bottom (anchor_y), then left-to-right (anchor_x)
-    reconciled.sort(key=lambda d: (
-        d.page,
-        d.anchor_y if d.anchor_y is not None else 0.0,
-        d.anchor_x if d.anchor_x is not None else 0.0,
-    ))
+    if views:
+        view_order: dict[str, tuple[int, int, float]] = {}
+        for i, v in enumerate(views):
+            view_order[v.name] = (v.page, i, v.bbox[1])  # (page, index, top)
+        reconciled.sort(key=lambda d: (
+            d.page,
+            view_order.get(d.view_name or "", (d.page, 999, 999)),
+            d.anchor_y if d.anchor_y is not None else 0.0,
+            d.anchor_x if d.anchor_x is not None else 0.0,
+        ))
+    else:
+        reconciled.sort(key=lambda d: (
+            d.page,
+            d.anchor_y if d.anchor_y is not None else 0.0,
+            d.anchor_x if d.anchor_x is not None else 0.0,
+        ))
 
     return reconciled
 

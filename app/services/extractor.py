@@ -11,7 +11,7 @@ Returns a list of ExtractedDimension dicts ready for the reconciler.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 import pdfplumber
 
@@ -245,3 +245,75 @@ def _flush_word(chars: list, band_x: float, out: list[tuple[str, float, float]])
     if text:
         y = chars[0]["top"]
         out.append((text, band_x, y))
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+PDF_SCALE = 300.0 / 72.0  # PDF points → 300 DPI pixels
+
+
+def _infer_type(text: str) -> str:
+    """Infer dimension type from raw text (used by LLM-sourced dimensions)."""
+    t = text.strip()
+    if any(t.startswith(c) for c in ("⌀", "Φ", "φ", "Ø", "ø")):
+        return "diameter"
+    if t.upper().startswith("R") and not t.upper().startswith("RA") and not t.upper().startswith("RZ"):
+        return "radius"
+    if "°" in t:
+        return "angle"
+    if any(sym in t for sym in ("⊕", "⊘", "○", "□", "◎", "⌖", "⊥", "∥", "∠", "↗")):
+        return "gdt"
+    lower = t.lower()
+    if lower.startswith("ra") or lower.startswith("rz"):
+        return "roughness"
+    if t.startswith("(") and t.endswith(")"):
+        return "reference"
+    return "linear"
+
+
+# ---------------------------------------------------------------------------
+# View-aware filtering
+# ---------------------------------------------------------------------------
+
+def filter_by_views(
+    dims: list[ExtractedDimension],
+    views: list,
+    excluded: list,
+) -> list[ExtractedDimension]:
+    """Assign view_name to each dimension, discard those in excluded regions.
+
+    Coordinates in ExtractedDimension are PDF points; view/excluded bboxes
+    are in 300 DPI pixels. Conversion: px = pt * (300/72).
+    """
+    scale = PDF_SCALE
+    filtered: list[ExtractedDimension] = []
+
+    for dim in dims:
+        px = dim.anchor_x * scale if dim.anchor_x is not None else None
+        py = dim.anchor_y * scale if dim.anchor_y is not None else None
+        if px is None or py is None:
+            continue
+
+        # Check excluded regions first
+        in_excluded = False
+        for exc in excluded:
+            l, t, r, b = exc.bbox
+            if l <= px <= r and t <= py <= b:
+                in_excluded = True
+                break
+        if in_excluded:
+            continue
+
+        # Assign view_name
+        view_name = None
+        for view in views:
+            l, t, r, b = view.bbox
+            if l <= px <= r and t <= py <= b:
+                view_name = view.name
+                break
+
+        filtered.append(replace(dim, view_name=view_name))
+
+    return filtered
