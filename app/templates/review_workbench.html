@@ -4,117 +4,66 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
-// ── URL helpers ──────────────────────────────────────────────────────────
 const pathParts = window.location.pathname.split("/");
 const partId = Number(pathParts[2]);
 const versionId = Number(pathParts[4]);
 
-// ── usePanZoom hook ──────────────────────────────────────────────────────
+// ── 状态配置 ────────────────────────────────────────────────────────────────
+const REVIEW_STATUSES = [
+  { value: "confirmed",    label: "确认",  color: "var(--signal-green)" },
+  { value: "questionable", label: "存疑",  color: "var(--signal-amber)" },
+  { value: "rejected",     label: "驳回",  color: "var(--signal-red)"   },
+  { value: "pending",      label: "待审",  color: "var(--signal-gray)"  },
+];
+
+// ── usePanZoom ───────────────────────────────────────────────────────────────
 function usePanZoom(containerRef) {
   const [zoom, setZoom] = useState(0.85);
-  const [offsetX, setOffsetX] = useState(0);
-  const [offsetY, setOffsetY] = useState(0);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
   const isPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
 
-  const fitScreen = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const img = container.querySelector("img");
-    if (!img || !img.complete || !img.naturalWidth) {
-      setZoom(1); setOffsetX(0); setOffsetY(0);
-      return;
-    }
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    const scale = Math.min(cw / img.naturalWidth, ch / img.naturalHeight, 1.5);
+  const fitScreen = useCallback((imgEl) => {
+    const c = containerRef.current;
+    if (!c) return;
+    const el = imgEl || c.querySelector("img");
+    if (!el || !el.naturalWidth) { setZoom(1); setOffset({ x: 0, y: 0 }); return; }
+    const scale = Math.min(c.clientWidth / el.naturalWidth, c.clientHeight / el.naturalHeight, 1.5) * 0.92;
     setZoom(scale);
-    setOffsetX((cw - img.naturalWidth * scale) / 2);
-    setOffsetY((ch - img.naturalHeight * scale) / 2);
+    setOffset({ x: (c.clientWidth - el.naturalWidth * scale) / 2, y: (c.clientHeight - el.naturalHeight * scale) / 2 });
   }, [containerRef]);
 
-  const handleWheel = useCallback((e) => {
+  const handleWheel = useCallback(e => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom((z) => {
-      const newZoom = Math.min(8, Math.max(0.1, z * delta));
+    const factor = e.deltaY > 0 ? 0.91 : 1.1;
+    setZoom(z => {
+      const nz = Math.min(10, Math.max(0.1, z * factor));
       const rect = containerRef.current.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      setOffsetX((ox) => mx - (mx - ox) * (newZoom / z));
-      setOffsetY((oy) => my - (my - oy) * (newZoom / z));
-      return newZoom;
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      setOffset(o => ({ x: mx - (mx - o.x) * (nz / z), y: my - (my - o.y) * (nz / z) }));
+      return nz;
     });
   }, [containerRef]);
 
-  const handleMouseDown = useCallback((e) => {
-    if (e.target.tagName === "IMG" || e.target === containerRef.current) {
-      isPanning.current = true;
-      lastMouse.current = { x: e.clientX, y: e.clientY };
-    }
-  }, [containerRef]);
-
-  const handleMouseMove = useCallback((e) => {
-    if (!isPanning.current) return;
-    const dx = e.clientX - lastMouse.current.x;
-    const dy = e.clientY - lastMouse.current.y;
+  const onMouseDown = useCallback(e => {
+    if (e.button !== 0) return;
+    if (e.target.closest("[data-marker]")) return;
+    isPanning.current = true;
     lastMouse.current = { x: e.clientX, y: e.clientY };
-    setOffsetX((ox) => ox + dx);
-    setOffsetY((oy) => oy + dy);
+    e.currentTarget.style.cursor = "grabbing";
   }, []);
 
-  const handleMouseUp = useCallback(() => {
+  const onMouseMove = useCallback(e => {
+    if (!isPanning.current) return;
+    const dx = e.clientX - lastMouse.current.x, dy = e.clientY - lastMouse.current.y;
+    lastMouse.current = { x: e.clientX, y: e.clientY };
+    setOffset(o => ({ x: o.x + dx, y: o.y + dy }));
+  }, []);
+
+  const onMouseUp = useCallback(e => {
     isPanning.current = false;
+    if (e.currentTarget) e.currentTarget.style.cursor = "grab";
   }, []);
-
-  const handleDblClick = useCallback(() => {
-    fitScreen();
-  }, [fitScreen]);
-
-  return { zoom, offsetX, offsetY, setOffsetX, setOffsetY, fitScreen, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, handleDblClick };
-}
-
-// ── Repulsion algorithm ──────────────────────────────────────────────────
-function applyRepulsion(dims, zoom, minGapPx) {
-  const gap = minGapPx || 28;
-  const adjusted = dims.map((d, i) => ({ ...d, _gx: 0, _gy: 0, _idx: i }));
-  const threshold = gap / Math.max(zoom, 0.1);
-
-  for (let iter = 0; iter < 10; iter++) {
-    let moved = false;
-    for (let i = 0; i < adjusted.length; i++) {
-      for (let j = i + 1; j < adjusted.length; j++) {
-        const dx = (adjusted[i].anchor_x + adjusted[i]._gx) - (adjusted[j].anchor_x + adjusted[j]._gx);
-        const dy = (adjusted[i].anchor_y + adjusted[i]._gy) - (adjusted[j].anchor_y + adjusted[j]._gy);
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < threshold && dist > 0.01) {
-          const push = (threshold - dist) / dist * 0.5;
-          const px = dx * push;
-          const py = dy * push;
-          adjusted[i]._gx += px;
-          adjusted[i]._gy += py;
-          adjusted[j]._gx -= px;
-          adjusted[j]._gy -= py;
-          moved = true;
-        }
-      }
-    }
-    if (!moved) break;
-  }
-  return adjusted;
-}
-
-// ── DrawingCanvas component ──────────────────────────────────────────────
-function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim }) {
-  const containerRef = useRef(null);
-  const { zoom, offsetX, offsetY, fitScreen, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, handleDblClick } = usePanZoom(containerRef);
-  const [imageError, setImageError] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    setImageError(false);
-    fitScreen();
-  }, [drawing?.id]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -123,323 +72,248 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim }) {
     return () => el.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
 
+  return { zoom, offset, fitScreen, onMouseDown, onMouseMove, onMouseUp, setOffset, setZoom };
+}
+
+// ── 标注重叠分离 ─────────────────────────────────────────────────────────────
+function applyRepulsion(dims, zoom) {
+  if (zoom >= 0.55) return dims.map(d => ({ ...d, _gx: 0, _gy: 0 }));
+  const gap = 30 / Math.max(zoom, 0.1);
+  const adj = dims.map(d => ({ ...d, _gx: 0, _gy: 0 }));
+  for (let iter = 0; iter < 12; iter++) {
+    let moved = false;
+    for (let i = 0; i < adj.length; i++) {
+      for (let j = i + 1; j < adj.length; j++) {
+        const dx = (adj[i].anchor_x + adj[i]._gx) - (adj[j].anchor_x + adj[j]._gx);
+        const dy = (adj[i].anchor_y + adj[i]._gy) - (adj[j].anchor_y + adj[j]._gy);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < gap && dist > 0.01) {
+          const p = (gap - dist) / dist * 0.5;
+          adj[i]._gx += dx * p; adj[i]._gy += dy * p;
+          adj[j]._gx -= dx * p; adj[j]._gy -= dy * p;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return adj;
+}
+
+// ── ContextMenu ──────────────────────────────────────────────────────────────
+function ContextMenu({ x, y, dim, onClose, onStatusChange }) {
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState({ x, y });
+
+  useEffect(() => {
+    const handler = () => onClose();
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    setPos({
+      x: x + rect.width > window.innerWidth ? window.innerWidth - rect.width - 8 : x,
+      y: y + rect.height > window.innerHeight ? window.innerHeight - rect.height - 8 : y,
+    });
+  }, [x, y]);
+
+  const items = REVIEW_STATUSES.filter(s => s.value !== dim.review_status);
+
+  return (
+    <div ref={menuRef} className="ctx-menu" style={{ left: pos.x, top: pos.y }} onClick={e => e.stopPropagation()}>
+      <div style={{ padding: "4px 10px 6px", fontSize: 10, color: "var(--ink-disabled)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+        #{String(dim.sequence).padStart(2, "0")} {dim.value}
+      </div>
+      <div className="ctx-divider" />
+      {items.map(it => (
+        <div key={it.value} className="ctx-item" onClick={() => { onStatusChange(dim.id, it.value); onClose(); }}>
+          <span className="ctx-dot" style={{ background: it.color }} />
+          {it.label}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── DrawingCanvas ────────────────────────────────────────────────────────────
+function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim, onContextMenuDim, readOnly }) {
+  const containerRef = useRef(null);
+  const { zoom, offset, fitScreen, onMouseDown, onMouseMove, onMouseUp } = usePanZoom(containerRef);
+  const [imageError, setImageError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => { setImageError(false); fitScreen(); }, [drawing?.id]);
+
   const showGuides = zoom < 0.5;
   const adjustedDims = useMemo(() =>
-    showGuides ? applyRepulsion(dims, zoom, 28) : dims.map((d, i) => ({ ...d, _gx: 0, _gy: 0, _idx: i })),
+    showGuides ? applyRepulsion(dims, zoom) : dims.map(d => ({ ...d, _gx: 0, _gy: 0 })),
     [dims, zoom, showGuides]
   );
 
   const imgSrc = drawing ? `/static/drawings/${drawing.id}/page_1.jpg?t=${reloadKey}` : null;
 
-  return React.createElement("div", {
-    ref: containerRef,
-    onMouseDown: handleMouseDown, onMouseMove: handleMouseMove, onMouseUp: handleMouseUp,
-    onMouseLeave: handleMouseUp, onDoubleClick: handleDblClick,
-    style: canvasStyles.container,
-  },
-    // Toolbar
-    React.createElement("div", { style: canvasStyles.toolbar },
-      React.createElement("span", { style: canvasStyles.zoomLabel }, `${Math.round(zoom * 100)}%`),
-      React.createElement("button", { onClick: fitScreen, style: canvasStyles.toolbarBtn, title: "适应窗口" }, "⊞"),
-    ),
-    // Image or fallback
-    imageError
-      ? React.createElement("div", { style: canvasStyles.fallback },
-          React.createElement("div", { style: canvasStyles.fallbackIcon }, "📐"),
-          React.createElement("div", { style: canvasStyles.fallbackText }, "图纸图片未生成"),
-          React.createElement("div", { style: canvasStyles.fallbackHint }, "请重新上传版本或点击下方按钮重新生成"),
-          React.createElement("button", {
-            onClick: async () => {
-              try {
-                const resp = await fetch(`/parts/${partId}/versions/${versionId}/reprocess`, { method: "POST" });
-                if (resp.ok) {
-                  setReloadKey((k) => k + 1);
-                  setImageError(false);
-                }
-              } catch (err) { /* silently fail */ }
-            },
-            style: canvasStyles.reprocessBtn,
-          }, "重新生成图片"),
-        )
-      : imgSrc && React.createElement("img", {
-          src: imgSrc,
-          onError: () => setImageError(true),
-          onLoad: fitScreen,
-          style: {
-            ...canvasStyles.image,
-            transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
-            transformOrigin: "0 0",
-          },
-          draggable: false,
-        }),
-    // SVG guide lines
-    showGuides && React.createElement("svg", { style: canvasStyles.svgOverlay },
-      adjustedDims.filter((d) => Math.abs(d._gx) > 1 || Math.abs(d._gy) > 1).map((d) => {
-        const sx = (d.anchor_x + d._gx) * zoom + offsetX;
-        const sy = (d.anchor_y + d._gy) * zoom + offsetY;
-        const ex = d.anchor_x * zoom + offsetX;
-        const ey = d.anchor_y * zoom + offsetY;
-        return React.createElement("line", {
-          key: `guide-${d.id}`,
-          x1: sx, y1: sy, x2: ex, y2: ey,
-          stroke: "var(--ink-disabled)", strokeWidth: 1,
-          strokeDasharray: "3 3", opacity: 0.5,
-        });
-      })
-    ),
-    // Marker labels
-    adjustedDims.map((d) =>
-      React.createElement(MarkerLabel, {
-        key: d.id,
-        dim: { ...d, anchor_x: d.anchor_x + d._gx, anchor_y: d.anchor_y + d._gy },
-        zoom, offsetX, offsetY,
-        isSelected: d.id === selectedDimId,
-        onClick: onSelectDim,
-      })
-    ),
+  return (
+    <div
+      ref={containerRef}
+      onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
+      onDoubleClick={() => fitScreen()}
+      style={{ flex: 1, position: "relative", overflow: "hidden", background: "#e8eaed", cursor: "grab" }}
+    >
+      <div style={{ position: "absolute", top: 8, right: 8, zIndex: 30, display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.85)", border: "1px solid var(--border-color)", borderRadius: 2, padding: "4px 8px", backdropFilter: "blur(4px)" }}>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-secondary)", minWidth: 42, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
+        <button onClick={() => fitScreen()} style={{ background: "transparent", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink-secondary)", cursor: "pointer", fontSize: 14, padding: "2px 6px", lineHeight: 1 }} title="适应窗口">⊞</button>
+      </div>
+      {imageError ? (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--ink-disabled)" }}>
+          <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.5 }}>📐</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink-secondary)", marginBottom: 4 }}>图纸图片未生成</div>
+          <div style={{ fontSize: 12, marginBottom: 16 }}>请重新上传版本或点击下方按钮重新生成</div>
+          <button onClick={async () => {
+            const resp = await fetch(`/parts/${partId}/versions/${versionId}/reprocess`, { method: "POST" });
+            if (resp.ok) { setReloadKey(k => k + 1); setImageError(false); }
+          }} style={{ padding: "6px 20px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>重新生成图片</button>
+        </div>
+      ) : imgSrc && (
+        <img src={imgSrc} onError={() => setImageError(true)} onLoad={e => fitScreen(e.target)}
+          style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", userSelect: "none", transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`, transformOrigin: "0 0" }}
+          draggable={false} />
+      )}
+      {showGuides && (
+        <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 5 }}>
+          {adjustedDims.filter(d => Math.abs(d._gx) > 1 || Math.abs(d._gy) > 1).map(d => (
+            <line key={`g-${d.id}`}
+              x1={(d.anchor_x + d._gx) * zoom + offset.x} y1={(d.anchor_y + d._gy) * zoom + offset.y}
+              x2={d.anchor_x * zoom + offset.x} y2={d.anchor_y * zoom + offset.y}
+              stroke="var(--ink-disabled)" strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
+          ))}
+        </svg>
+      )}
+      {adjustedDims.map(d => (
+        <MarkerLabel key={d.id}
+          dim={{ ...d, anchor_x: d.anchor_x + d._gx, anchor_y: d.anchor_y + d._gy }}
+          zoom={zoom} offsetX={offset.x} offsetY={offset.y}
+          isSelected={d.id === selectedDimId}
+          onClick={onSelectDim}
+          onContextMenu={!readOnly ? onContextMenuDim : undefined}
+        />
+      ))}
+    </div>
   );
 }
 
-const canvasStyles = {
-  container: {
-    flex: 1, position: "relative", overflow: "hidden",
-    background: "var(--bg-canvas)", cursor: "grab",
-  },
-  toolbar: {
-    position: "absolute", top: 8, right: 8, zIndex: 30,
-    display: "flex", alignItems: "center", gap: "var(--space-8)",
-    background: "rgba(30,33,39,0.9)", border: "1px solid var(--border-color)",
-    borderRadius: "var(--radius)", padding: "4px 8px",
-  },
-  zoomLabel: {
-    fontFamily: "var(--font-mono)", fontSize: 12,
-    color: "var(--ink-secondary)", minWidth: 42, textAlign: "center",
-  },
-  toolbarBtn: {
-    background: "transparent", border: "1px solid var(--border-color)",
-    borderRadius: "var(--radius)", color: "var(--ink-secondary)",
-    cursor: "pointer", fontSize: 14, padding: "2px 6px",
-    lineHeight: 1,
-  },
-  image: {
-    position: "absolute", top: 0, left: 0,
-    pointerEvents: "none", userSelect: "none",
-  },
-  svgOverlay: {
-    position: "absolute", top: 0, left: 0, width: "100%", height: "100%",
-    pointerEvents: "none", zIndex: 5,
-  },
-  fallback: {
-    position: "absolute", inset: 0,
-    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-    color: "var(--ink-disabled)",
-  },
-  fallbackIcon: { fontSize: 48, marginBottom: "var(--space-12)", opacity: 0.5 },
-  fallbackText: { fontSize: 15, fontWeight: 600, color: "var(--ink-secondary)", marginBottom: "var(--space-4)" },
-  fallbackHint: { fontSize: 12, marginBottom: "var(--space-16)" },
-  reprocessBtn: {
-    padding: "6px 20px", background: "var(--accent-primary)", border: "none",
-    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
-    fontSize: 13, fontWeight: 600,
-  },
-};
-
-// ── Drawing selector ─────────────────────────────────────────────────────
+// ── DrawingTabs ──────────────────────────────────────────────────────────────
 function DrawingTabs({ drawings, activeDrawingId, onSelect }) {
-  return React.createElement("div", { style: tabStyles.wrapper },
-    drawings.map((d) =>
-      React.createElement("button", {
-        key: d.id,
-        onClick: () => onSelect(d.id),
-        style: {
-          ...tabStyles.tab,
-          borderBottomColor: d.id === activeDrawingId ? "var(--accent-primary)" : "transparent",
+  return (
+    <div style={{ display: "flex", gap: 1, background: "var(--bg-surface)", borderBottom: "1px solid var(--border-color)", padding: "0 12px", overflowX: "auto" }}>
+      {drawings.map(d => (
+        <button key={d.id} onClick={() => onSelect(d.id)} style={{
+          padding: "6px 14px", background: "transparent", border: "none",
+          borderBottom: `2px solid ${d.id === activeDrawingId ? "var(--accent-primary)" : "transparent"}`,
+          cursor: "pointer", fontSize: 12,
           color: d.id === activeDrawingId ? "var(--ink)" : "var(--ink-secondary)",
-        },
-      }, `图纸 ${d.sequence} · ${d.filename}`)
-    )
+          whiteSpace: "nowrap",
+        }}>图纸 {d.sequence} · {d.filename}</button>
+      ))}
+    </div>
   );
 }
 
-const tabStyles = {
-  wrapper: {
-    display: "flex", gap: 1, background: "var(--bg-surface)",
-    borderBottom: "1px solid var(--border-color)", padding: "0 var(--space-12)",
-    overflowX: "auto",
-  },
-  tab: {
-    padding: "6px 14px", background: "transparent", border: "none",
-    borderBottom: "2px solid transparent", cursor: "pointer",
-    fontSize: 12, whiteSpace: "nowrap",
-  },
+// ── DimensionList ────────────────────────────────────────────────────────────
+const DIM_FILTERS = [
+  { value: "all", label: "全部" },
+  { value: "pending", label: "待审" },
+  { value: "confirmed", label: "确认" },
+  { value: "questionable", label: "存疑" },
+  { value: "rejected", label: "驳回" },
+];
+
+const DIM_COLORS = {
+  pending: "var(--signal-gray)", confirmed: "var(--signal-green)",
+  questionable: "var(--signal-amber)", rejected: "var(--signal-red)",
 };
 
-// ── Version selector ─────────────────────────────────────────────────────
-function VersionSelector({ versions, currentVersionId, onChange }) {
-  return React.createElement("select", {
-    value: currentVersionId,
-    onChange: (e) => onChange(Number(e.target.value)),
-    style: versionSelectStyles.select,
-  }, versions.map((v) =>
-    React.createElement("option", { key: v.id, value: v.id },
-      `${v.version_code}${v.is_current ? " (当前)" : ""} — ${v.status}`
-    )
-  ));
-}
-
-const versionSelectStyles = {
-  select: {
-    padding: "4px 8px", background: "var(--bg-surface)",
-    border: "1px solid var(--border-color)", borderRadius: "var(--radius)",
-    color: "var(--ink)", fontSize: 12, outline: "none", cursor: "pointer",
-    fontFamily: "var(--font-mono)",
-  },
-};
-
-// ── DimensionList ────────────────────────────────────────────────────────
 function DimensionList({ dims, selectedDimId, onSelect, filter, onFilterChange }) {
-  const statusLabels = { pending: "待审", confirmed: "确认", questionable: "存疑" };
-  const filterOptions = ["all", "pending", "confirmed", "questionable"];
-
-  const filtered = filter === "all" ? dims : dims.filter((d) => d.review_status === filter);
-
-  return React.createElement("div", { style: dimListStyles.wrapper },
-    React.createElement("div", { style: dimListStyles.filterBar },
-      filterOptions.map((opt) =>
-        React.createElement("button", {
-          key: opt,
-          onClick: () => onFilterChange(opt),
-          style: {
-            ...dimListStyles.filterBtn,
-            color: filter === opt ? "var(--accent-primary)" : "var(--ink-secondary)",
-            borderBottomColor: filter === opt ? "var(--accent-primary)" : "transparent",
-          },
-        }, opt === "all" ? "全部" : statusLabels[opt])
-      ),
-      React.createElement("span", { style: dimListStyles.count }, `${filtered.length}/${dims.length}`),
-    ),
-    React.createElement("div", { style: dimListStyles.list },
-      filtered.length === 0
-        ? React.createElement("div", { style: dimListStyles.empty }, "暂无标注")
-        : filtered.map((d) =>
-            React.createElement("div", {
-              key: d.id,
-              onClick: () => onSelect(d.id),
-              style: { ...dimListStyles.item, background: d.id === selectedDimId ? "rgba(240,165,0,0.08)" : "transparent" },
-            },
-              React.createElement("span", { style: dimListStyles.seq }, String(d.sequence).padStart(2, "0")),
-              React.createElement("span", { style: dimListStyles.value }, d.value),
-              React.createElement(StatusDot, { status: d.review_status }),
-              d.message_count > 0 && React.createElement("span", { style: dimListStyles.badge }, d.message_count),
-            )
-          )
-    ),
+  const filtered = filter === "all" ? dims : dims.filter(d => d.review_status === filter);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 1, padding: "0 12px", borderBottom: "1px solid var(--border-color)", alignItems: "center" }}>
+        {DIM_FILTERS.map(opt => (
+          <button key={opt.value} onClick={() => onFilterChange(opt.value)} style={{
+            padding: "6px 10px", background: "transparent", border: "none",
+            borderBottom: `2px solid ${filter === opt.value ? "var(--accent-primary)" : "transparent"}`,
+            cursor: "pointer", fontSize: 12,
+            color: filter === opt.value ? "var(--accent-primary)" : "var(--ink-secondary)",
+          }}>{opt.label}</button>
+        ))}
+        <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--ink-disabled)", fontFamily: "monospace" }}>{filtered.length}/{dims.length}</span>
+      </div>
+      <div style={{ maxHeight: 240, overflowY: "auto" }}>
+        {filtered.length === 0
+          ? <div style={{ padding: 24, textAlign: "center", color: "var(--ink-disabled)", fontSize: 12 }}>暂无标注</div>
+          : filtered.map(d => (
+              <div key={d.id} onClick={() => onSelect(d.id)} style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "6px 12px", cursor: "pointer",
+                borderBottom: "1px solid var(--border-color)",
+                background: d.id === selectedDimId ? "var(--bg-selected)" : "transparent",
+              }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 700, color: "var(--ink-disabled)", minWidth: 22 }}>{String(d.sequence).padStart(2, "0")}</span>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--ink)", flex: 1 }}>{d.value}</span>
+                <span style={{ width: 7, height: 7, borderRadius: 2, flexShrink: 0, backgroundColor: DIM_COLORS[d.review_status] || DIM_COLORS.pending }} />
+                {d.message_count > 0 && (
+                  <span style={{ fontSize: 10, background: "var(--accent-primary)", color: "#fff", borderRadius: 2, minWidth: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 600 }}>{d.message_count}</span>
+                )}
+              </div>
+            ))
+        }
+      </div>
+    </div>
   );
 }
 
-const dimListStyles = {
-  wrapper: {},
-  filterBar: {
-    display: "flex", gap: 1, padding: "0 var(--space-12)",
-    borderBottom: "1px solid var(--border-color)", alignItems: "center",
-  },
-  filterBtn: {
-    padding: "6px 10px", background: "transparent", border: "none",
-    borderBottom: "2px solid transparent", cursor: "pointer", fontSize: 12,
-  },
-  count: { marginLeft: "auto", fontSize: 11, color: "var(--ink-disabled)", fontFamily: "var(--font-mono)" },
-  list: { maxHeight: 240, overflowY: "auto" },
-  empty: { padding: 24, textAlign: "center", color: "var(--ink-disabled)", fontSize: 12 },
-  item: {
-    display: "flex", alignItems: "center", gap: "var(--space-8)",
-    padding: "6px var(--space-12)", cursor: "pointer",
-    borderBottom: "1px solid rgba(58,63,74,0.4)", fontSize: 13,
-  },
-  seq: {
-    fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 700,
-    color: "var(--ink-disabled)", minWidth: 22,
-  },
-  value: {
-    fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--ink)", flex: 1,
-  },
-  badge: {
-    fontSize: 10, background: "var(--accent-primary)", color: "#1e2127",
-    borderRadius: 2, minWidth: 16, height: 16,
-    display: "inline-flex", alignItems: "center", justifyContent: "center",
-    fontWeight: 600,
-  },
-};
-
-// ── DimensionDetail ──────────────────────────────────────────────────────
+// ── DimensionDetail ──────────────────────────────────────────────────────────
 function DimensionDetail({ dim, readOnly, onStatusChange }) {
-  if (!dim) {
-    return React.createElement("div", { style: { padding: "var(--space-16)", color: "var(--ink-disabled)", fontSize: 12, textAlign: "center" } }, "选择一个标注");
-  }
-
-  const statuses = [
-    { value: "pending", label: "待审" },
-    { value: "confirmed", label: "确认" },
-    { value: "questionable", label: "存疑" },
-  ];
-
-  return React.createElement("div", { style: ddStyles.wrapper },
-    React.createElement("div", { style: ddStyles.header },
-      React.createElement("span", { style: ddStyles.seq }, `#${String(dim.sequence).padStart(2, "0")}`),
-      React.createElement("span", { style: ddStyles.value }, dim.value),
-    ),
-    React.createElement("div", { style: ddStyles.grid },
-      React.createElement(DDField, { label: "类型", value: dim.dim_type }),
-      React.createElement(DDField, { label: "来源", value: dim.source }),
-      React.createElement(DDField, { label: "视图", value: dim.view_name || "—" }),
-      React.createElement(DDField, { label: "坐标", value: dim.anchor_x ? `${Math.round(dim.anchor_x)}, ${Math.round(dim.anchor_y)}` : "—" }),
-    ),
-    !readOnly && React.createElement("div", { style: ddStyles.statusRow },
-      React.createElement("span", { style: { fontSize: 11, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" } }, "状态"),
-      React.createElement("div", { style: ddStyles.statusBtns },
-        statuses.map((s) =>
-          React.createElement("button", {
-            key: s.value,
-            onClick: () => onStatusChange(dim.id, s.value),
-            style: {
-              ...ddStyles.statusBtn,
-              background: dim.review_status === s.value ? "var(--accent-primary)" : "transparent",
-              color: dim.review_status === s.value ? "#1e2127" : "var(--ink-secondary)",
-              borderColor: dim.review_status === s.value ? "var(--accent-primary)" : "var(--border-color)",
-            },
-          }, s.label)
-        )
-      ),
-    ),
+  if (!dim) return (
+    <div style={{ padding: 16, color: "var(--ink-disabled)", fontSize: 12, textAlign: "center" }}>选择一个标注</div>
+  );
+  return (
+    <div style={{ padding: 16, borderBottom: "1px solid var(--border-color)" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-disabled)" }}>#{String(dim.sequence).padStart(2, "0")}</span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>{dim.value}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+        {[["类型", dim.dim_type], ["来源", dim.source], ["视图", dim.view_name || "—"], ["坐标", dim.anchor_x ? `${Math.round(dim.anchor_x)}, ${Math.round(dim.anchor_y)}` : "—"]].map(([label, value]) => (
+          <div key={label}>
+            <div style={{ fontSize: 10, color: "var(--ink-disabled)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
+            <div style={{ fontSize: 12, color: "var(--ink)", fontFamily: "var(--font-mono)" }}>{value}</div>
+          </div>
+        ))}
+      </div>
+      {!readOnly && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 11, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>状态</span>
+          <div style={{ display: "flex", gap: 4 }}>
+            {REVIEW_STATUSES.map(s => (
+              <button key={s.value} onClick={() => onStatusChange(dim.id, s.value)} style={{
+                padding: "3px 10px", border: "1px solid",
+                borderRadius: 2, cursor: "pointer", fontSize: 11, fontWeight: 600,
+                background: dim.review_status === s.value ? s.color : "transparent",
+                color: dim.review_status === s.value ? "#fff" : "var(--ink-secondary)",
+                borderColor: dim.review_status === s.value ? s.color : "var(--border-color)",
+              }}>{s.label}</button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-function DDField({ label, value }) {
-  return React.createElement("div", null,
-    React.createElement("div", { style: ddStyles.fieldLabel }, label),
-    React.createElement("div", { style: ddStyles.fieldValue }, value),
-  );
-}
-
-const ddStyles = {
-  wrapper: { padding: "var(--space-16)", borderBottom: "1px solid var(--border-color)" },
-  header: { display: "flex", alignItems: "baseline", gap: "var(--space-8)", marginBottom: "var(--space-12)" },
-  seq: { fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-disabled)" },
-  value: { fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 600, color: "var(--ink)" },
-  grid: {
-    display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-8)",
-    marginBottom: "var(--space-12)",
-  },
-  fieldLabel: { fontSize: 10, color: "var(--ink-disabled)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 },
-  fieldValue: { fontSize: 12, color: "var(--ink)", fontFamily: "var(--font-mono)" },
-  statusRow: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-  statusBtns: { display: "flex", gap: 4 },
-  statusBtn: {
-    padding: "3px 10px", border: "1px solid", borderRadius: "var(--radius)",
-    cursor: "pointer", fontSize: 11, fontWeight: 600,
-  },
-};
-
-// ── DiscussionThread ─────────────────────────────────────────────────────
+// ── DiscussionThread ─────────────────────────────────────────────────────────
 function DiscussionThread({ dimId, readOnly }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
@@ -447,9 +321,7 @@ function DiscussionThread({ dimId, readOnly }) {
 
   useEffect(() => {
     if (!dimId) { setMessages([]); return; }
-    fetch(`/api/dimensions/${dimId}/messages`)
-      .then((r) => r.json())
-      .then(setMessages);
+    fetch(`/api/dimensions/${dimId}/messages`).then(r => r.json()).then(setMessages);
   }, [dimId]);
 
   const handleSend = async () => {
@@ -460,184 +332,39 @@ function DiscussionThread({ dimId, readOnly }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ author: "审核员", content: text.trim() }),
       });
-      if (resp.ok) {
-        const msg = await resp.json();
-        setMessages((prev) => [...prev, msg]);
-        setText("");
-      }
-    } finally {
-      setSending(false);
-    }
+      if (resp.ok) { setMessages(prev => [...prev, await resp.json()]); setText(""); }
+    } finally { setSending(false); }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-  };
-
-  return React.createElement("div", { style: discStyles.wrapper },
-    React.createElement("div", { style: discStyles.messages },
-      messages.length === 0
-        ? React.createElement("div", { style: { color: "var(--ink-disabled)", fontSize: 12, textAlign: "center", padding: 16 } }, "暂无讨论")
-        : messages.map((m) =>
-            React.createElement("div", { key: m.id, style: discStyles.bubble },
-              React.createElement("div", { style: discStyles.meta },
-                React.createElement("span", { style: discStyles.author }, m.author),
-                React.createElement("span", { style: discStyles.time }, m.created_at),
-              ),
-              React.createElement("div", { style: discStyles.content }, m.content),
-            )
-          )
-    ),
-    !readOnly && React.createElement("div", { style: discStyles.inputRow },
-      React.createElement("input", {
-        type: "text", placeholder: "输入讨论内容...",
-        value: text, onChange: (e) => setText(e.target.value),
-        onKeyDown: handleKeyDown, style: discStyles.input,
-      }),
-      React.createElement("button", {
-        onClick: handleSend, disabled: sending || !text.trim(),
-        style: { ...discStyles.sendBtn, opacity: sending || !text.trim() ? 0.5 : 1 },
-      }, "发送"),
-    ),
+  return (
+    <div style={{ borderBottom: "1px solid var(--border-color)" }}>
+      <div style={{ padding: 12, maxHeight: 200, overflowY: "auto" }}>
+        {messages.length === 0
+          ? <div style={{ color: "var(--ink-disabled)", fontSize: 12, textAlign: "center", padding: 16 }}>暂无讨论</div>
+          : messages.map(m => (
+              <div key={m.id} style={{ background: "var(--bg-elevated)", borderRadius: 2, padding: "8px 12px", marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--accent-primary)" }}>{m.author}</span>
+                  <span style={{ fontSize: 10, color: "var(--ink-disabled)" }}>{m.created_at}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--ink)", lineHeight: 1.5 }}>{m.content}</div>
+              </div>
+            ))
+        }
+      </div>
+      {!readOnly && (
+        <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid var(--border-color)" }}>
+          <input value={text} onChange={e => setText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            placeholder="输入讨论内容..." style={{ flex: 1, padding: "5px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 12, outline: "none" }} />
+          <button onClick={handleSend} disabled={sending || !text.trim()} style={{ padding: "5px 14px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, opacity: sending || !text.trim() ? 0.5 : 1 }}>发送</button>
+        </div>
+      )}
+    </div>
   );
 }
 
-const discStyles = {
-  wrapper: { borderBottom: "1px solid var(--border-color)" },
-  messages: { padding: "var(--space-12)", maxHeight: 200, overflowY: "auto" },
-  bubble: {
-    background: "var(--bg-elevated)", borderRadius: "var(--radius)",
-    padding: "var(--space-8) var(--space-12)", marginBottom: "var(--space-8)",
-  },
-  meta: {
-    display: "flex", justifyContent: "space-between", marginBottom: 4,
-  },
-  author: { fontSize: 11, fontWeight: 600, color: "var(--accent-primary)" },
-  time: { fontSize: 10, color: "var(--ink-disabled)" },
-  content: { fontSize: 12, color: "var(--ink)", lineHeight: 1.5 },
-  inputRow: {
-    display: "flex", gap: "var(--space-8)", padding: "var(--space-8) var(--space-12)",
-    borderTop: "1px solid var(--border-color)",
-  },
-  input: {
-    flex: 1, padding: "5px 10px", background: "var(--bg-canvas)",
-    border: "1px solid var(--border-color)", borderRadius: "var(--radius)",
-    color: "var(--ink)", fontSize: 12, outline: "none",
-  },
-  sendBtn: {
-    padding: "5px 14px", background: "var(--accent-primary)", border: "none",
-    borderRadius: "var(--radius)", color: "#1e2127", cursor: "pointer",
-    fontSize: 12, fontWeight: 600,
-  },
-};
-
-// ── ConclusionBar ────────────────────────────────────────────────────────
-function ConclusionBar({ dims, versionInfo, readOnly, onConfirm }) {
-  const counts = useMemo(() => ({
-    total: dims.length,
-    pending: dims.filter((d) => d.review_status === "pending").length,
-    confirmed: dims.filter((d) => d.review_status === "confirmed").length,
-    questionable: dims.filter((d) => d.review_status === "questionable").length,
-  }), [dims]);
-
-  const [notes, setNotes] = useState(versionInfo?.notes || "");
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [confirmAction, setConfirmAction] = useState(null);
-
-  const handleConfirm = () => {
-    onConfirm(confirmAction, notes);
-    setShowConfirm(false);
-  };
-
-  if (versionInfo?.confirm_result && readOnly) {
-    const date = versionInfo.confirmed_at || "";
-    return React.createElement("div", { style: cbStyles.wrapper },
-      React.createElement("div", { style: cbStyles.stampArea },
-        React.createElement(Stamp, { type: versionInfo.confirm_result, date }),
-      ),
-    );
-  }
-
-  return React.createElement("div", { style: cbStyles.wrapper },
-    React.createElement("div", { style: cbStyles.stats },
-      React.createElement("span", { style: cbStyles.stat }, `共 ${counts.total} 条`),
-      React.createElement("span", { style: { ...cbStyles.stat, color: "var(--ink-disabled)" } }, `待审 ${counts.pending}`),
-      React.createElement("span", { style: { ...cbStyles.stat, color: "var(--signal-green)" } }, `确认 ${counts.confirmed}`),
-      React.createElement("span", { style: { ...cbStyles.stat, color: "var(--signal-amber)" } }, `存疑 ${counts.questionable}`),
-    ),
-    !readOnly && React.createElement("div", null,
-      React.createElement("textarea", {
-        placeholder: "审核备注...", value: notes,
-        onChange: (e) => setNotes(e.target.value),
-        style: cbStyles.notes,
-        rows: 2,
-      }),
-      React.createElement("div", { style: cbStyles.actions },
-        React.createElement("button", {
-          onClick: () => { setConfirmAction("approved"); setShowConfirm(true); },
-          style: { ...cbStyles.btn, background: "var(--signal-green)", color: "#fff" },
-        }, "✓ 通过"),
-        React.createElement("button", {
-          onClick: () => { setConfirmAction("rejected"); setShowConfirm(true); },
-          style: { ...cbStyles.btn, background: "var(--signal-red)", color: "#fff" },
-        }, "✕ 驳回"),
-      ),
-    ),
-    showConfirm && React.createElement("div", { style: cbStyles.overlay, onClick: () => setShowConfirm(false) },
-      React.createElement("div", { style: cbStyles.dialog, onClick: (e) => e.stopPropagation() },
-        React.createElement("div", { style: { fontSize: 14, marginBottom: 12, color: "var(--ink)" } },
-          `确认${confirmAction === "approved" ? "通过" : "驳回"}此版本？`
-        ),
-        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-secondary)", marginBottom: 16 } },
-          `待审标注 ${counts.pending} 条，${confirmAction === "approved" ? "通过后标注状态将被锁定" : "驳回后版本将被标记为不合格"}.`
-        ),
-        React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
-          React.createElement("button", { onClick: () => setShowConfirm(false), style: cbStyles.cancelBtn }, "取消"),
-          React.createElement("button", { onClick: handleConfirm, style: { ...cbStyles.btn, background: "var(--accent-primary)", color: "#1e2127" } }, "确认提交"),
-        ),
-      ),
-    ),
-  );
-}
-
-const cbStyles = {
-  wrapper: { borderTop: "1px solid var(--border-color)" },
-  stampArea: { display: "flex", justifyContent: "center", padding: "var(--space-24)" },
-  stats: {
-    display: "flex", gap: "var(--space-12)", padding: "var(--space-8) var(--space-16)",
-    borderBottom: "1px solid var(--border-color)", fontSize: 11,
-    fontFamily: "var(--font-mono)",
-  },
-  stat: { color: "var(--ink-secondary)" },
-  notes: {
-    width: "100%", padding: "6px 10px", background: "var(--bg-canvas)",
-    border: "1px solid var(--border-color)", borderRadius: "var(--radius)",
-    color: "var(--ink)", fontSize: 12, outline: "none", resize: "vertical",
-    boxSizing: "border-box", margin: "var(--space-8) var(--space-12)",
-    width: "calc(100% - 24px)",
-  },
-  actions: {
-    display: "flex", gap: "var(--space-8)", padding: "0 var(--space-12) var(--space-12)",
-  },
-  btn: {
-    flex: 1, padding: "6px 0", border: "none", borderRadius: "var(--radius)",
-    cursor: "pointer", fontSize: 13, fontWeight: 600,
-  },
-  cancelBtn: {
-    padding: "6px 16px", background: "transparent", border: "1px solid var(--border-color)",
-    borderRadius: "var(--radius)", color: "var(--ink-secondary)", cursor: "pointer", fontSize: 12,
-  },
-  overlay: {
-    position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.6)",
-    display: "flex", alignItems: "center", justifyContent: "center",
-  },
-  dialog: {
-    background: "var(--bg-elevated)", borderRadius: "var(--radius)",
-    padding: "var(--space-24)", width: 360, border: "1px solid var(--border-color)",
-  },
-};
-
-// ── App ──────────────────────────────────────────────────────────────────
+// ── App ──────────────────────────────────────────────────────────────────────
 function App() {
   const [versions, setVersions] = useState([]);
   const [currentVersionId, setCurrentVersionId] = useState(versionId);
@@ -647,47 +374,32 @@ function App() {
   const [selectedDimId, setSelectedDimId] = useState(null);
   const [versionInfo, setVersionInfo] = useState(null);
   const [dimFilter, setDimFilter] = useState("all");
-  const [stampAnim, setStampAnim] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState(null);
 
-  // Fetch versions
   useEffect(() => {
-    fetch(`/api/parts/${partId}/versions`)
-      .then((r) => r.json())
-      .then((data) => {
-        setVersions(data);
-        const cv = data.find((v) => v.id === currentVersionId);
-        if (cv) setVersionInfo(cv);
-      });
-  }, [partId]);
+    fetch(`/api/parts/${partId}/versions`).then(r => r.json()).then(data => {
+      setVersions(data);
+      const cv = data.find(v => v.id === currentVersionId);
+      if (cv) setVersionInfo(cv);
+    });
+  }, []);
 
-  // Fetch drawings for current version
   useEffect(() => {
-    fetch(`/api/versions/${currentVersionId}/drawings`)
-      .then((r) => r.json())
-      .then((data) => {
-        setDrawings(data);
-        if (data.length > 0 && !activeDrawingId) {
-          setActiveDrawingId(data[0].id);
-        }
-      });
+    fetch(`/api/versions/${currentVersionId}/drawings`).then(r => r.json()).then(data => {
+      setDrawings(data);
+      if (data.length > 0) setActiveDrawingId(data[0].id);
+    });
   }, [currentVersionId]);
 
-  // Fetch dimensions for active drawing
   useEffect(() => {
     if (!activeDrawingId) { setDims([]); return; }
-    fetch(`/api/versions/${currentVersionId}/drawings/${activeDrawingId}/dimensions`)
-      .then((r) => r.json())
-      .then(setDims);
+    fetch(`/api/versions/${currentVersionId}/drawings/${activeDrawingId}/dimensions`).then(r => r.json()).then(setDims);
   }, [currentVersionId, activeDrawingId]);
 
-  const handleVersionChange = (vid) => {
-    setCurrentVersionId(vid);
-    setActiveDrawingId(null);
-    setSelectedDimId(null);
-    setDimFilter("all");
+  const handleVersionChange = vid => {
+    setCurrentVersionId(vid); setActiveDrawingId(null); setSelectedDimId(null); setDimFilter("all");
     window.history.replaceState(null, "", `/parts/${partId}/versions/${vid}/review`);
-    const cv = versions.find((v) => v.id === vid);
-    if (cv) setVersionInfo(cv);
+    setVersionInfo(versions.find(v => v.id === vid) || null);
   };
 
   const handleStatusChange = async (dimId, newStatus) => {
@@ -695,90 +407,59 @@ function App() {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ review_status: newStatus }),
     });
-    setDims((prev) => prev.map((d) => d.id === dimId ? { ...d, review_status: newStatus } : d));
+    setDims(prev => prev.map(d => d.id === dimId ? { ...d, review_status: newStatus } : d));
   };
 
-  const handleConfirm = async (result, notes) => {
-    await fetch(`/api/versions/${currentVersionId}/conclusion`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ result, notes }),
-    });
-    setVersionInfo((prev) => prev ? { ...prev, confirm_result: result, status: "confirmed", notes } : prev);
-    setStampAnim(true);
-    setTimeout(() => setStampAnim(false), 600);
+  const handleContextMenuDim = (e, dim) => {
+    setCtxMenu({ x: e.clientX, y: e.clientY, dim });
+    setSelectedDimId(dim.id);
   };
 
-  const activeDrawing = drawings.find((d) => d.id === activeDrawingId);
-  const selectedDim = dims.find((d) => d.id === selectedDimId);
+  const selectedDim = dims.find(d => d.id === selectedDimId);
+  const activeDrawing = drawings.find(d => d.id === activeDrawingId);
   const isReadOnly = versionInfo?.confirm_result != null && !versionInfo?.is_current;
 
-  return React.createElement("div", { style: appStyles.wrapper },
-    React.createElement(AppShell, {
-      breadcrumbs: [
-        { label: "零件列表", href: "/parts/" },
-        { label: "审核工作台" },
-      ],
-    },
-      React.createElement("div", { style: appStyles.topBar },
-        React.createElement("span", { style: { fontSize: 13, fontWeight: 600, fontFamily: "var(--font-display)" } }, versionInfo?.version_code || ""),
-        React.createElement(VersionSelector, {
-          versions, currentVersionId,
-          onChange: handleVersionChange,
-        }),
-        versionInfo && React.createElement(StatusDot, { status: versionInfo.status, label: versionInfo.status, pulse: versionInfo.status === "processing" }),
-      ),
-      React.createElement("div", { style: appStyles.body },
-        React.createElement("div", { style: appStyles.canvasArea },
-          drawings.length > 1 && React.createElement(DrawingTabs, {
-            drawings, activeDrawingId, onSelect: setActiveDrawingId,
-          }),
-          React.createElement(DrawingCanvas, {
-            drawing: activeDrawing,
-            dims, selectedDimId, onSelectDim: setSelectedDimId,
-          }),
-        ),
-        React.createElement("div", { style: appStyles.panel },
-          React.createElement(DimensionList, {
-            dims, selectedDimId, onSelect: setSelectedDimId,
-            filter: dimFilter, onFilterChange: setDimFilter,
-          }),
-          React.createElement(DimensionDetail, {
-            dim: selectedDim,
-            readOnly: isReadOnly || !!versionInfo?.confirm_result,
-            onStatusChange: handleStatusChange,
-          }),
-          selectedDimId && React.createElement(DiscussionThread, {
-            dimId: selectedDimId,
-            readOnly: isReadOnly || !!versionInfo?.confirm_result,
-          }),
-          React.createElement(ConclusionBar, {
-            dims, versionInfo,
-            readOnly: isReadOnly,
-            onConfirm: handleConfirm,
-          }),
-        ),
-      ),
-    ),
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <AppShell
+        breadcrumbs={[{ label: "零件列表", href: "/parts/" }, { label: "审核工作台" }]}
+        actions={
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {versionInfo && <StatusDot status={versionInfo.status} pulse={versionInfo.status === "processing"} />}
+            <select value={currentVersionId} onChange={e => handleVersionChange(Number(e.target.value))} style={{ padding: "4px 8px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 12, outline: "none", cursor: "pointer", fontFamily: "var(--font-mono)" }}>
+              {versions.map(v => (
+                <option key={v.id} value={v.id}>{v.version_code}{v.is_current ? " (当前)" : ""}</option>
+              ))}
+            </select>
+          </div>
+        }
+      >
+        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {drawings.length > 1 && <DrawingTabs drawings={drawings} activeDrawingId={activeDrawingId} onSelect={setActiveDrawingId} />}
+            <DrawingCanvas
+              drawing={activeDrawing} dims={dims} selectedDimId={selectedDimId}
+              onSelectDim={setSelectedDimId} onContextMenuDim={handleContextMenuDim}
+              readOnly={isReadOnly}
+            />
+          </div>
+          <div style={{ width: 280, borderLeft: "1px solid var(--border-color)", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-surface)" }}>
+            <DimensionList dims={dims} selectedDimId={selectedDimId} onSelect={setSelectedDimId} filter={dimFilter} onFilterChange={setDimFilter} />
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              <DimensionDetail dim={selectedDim} readOnly={isReadOnly} onStatusChange={handleStatusChange} />
+              {selectedDimId && <DiscussionThread dimId={selectedDimId} readOnly={isReadOnly} />}
+            </div>
+          </div>
+        </div>
+      </AppShell>
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} dim={ctxMenu.dim}
+          onClose={() => setCtxMenu(null)} onStatusChange={handleStatusChange} />
+      )}
+    </div>
   );
 }
 
-const appStyles = {
-  wrapper: { height: "100%", display: "flex", flexDirection: "column" },
-  topBar: {
-    display: "flex", alignItems: "center", gap: "var(--space-12)",
-    padding: "6px var(--space-16)", background: "var(--bg-surface)",
-    borderBottom: "1px solid var(--border-color)",
-  },
-  body: { flex: 1, display: "flex", overflow: "hidden" },
-  canvasArea: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
-  panel: {
-    width: 340, minWidth: 280, background: "var(--bg-surface)",
-    borderLeft: "1px solid var(--border-color)", overflowY: "auto",
-    display: "flex", flexDirection: "column",
-  },
-};
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(React.createElement(App));
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 {% endblock %}
