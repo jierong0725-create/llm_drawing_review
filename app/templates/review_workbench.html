@@ -164,6 +164,7 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim }) {
       : imgSrc && React.createElement("img", {
           src: imgSrc,
           onError: () => setImageError(true),
+          onLoad: fitScreen,
           style: {
             ...canvasStyles.image,
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
