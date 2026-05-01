@@ -16,7 +16,7 @@ from ..models import (
 from ..services.extractor import extract_from_pdf
 from ..services.vision import vision_check
 from ..services.reconciler import reconcile
-from ..services.image_gen import generate_drawing_images
+from ..services.image_gen import generate_drawing_images, RASTER_DPI
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "drawings")
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "uploads")
@@ -157,6 +157,7 @@ def create_version(
 
 def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> None:
     """Background task: extract dimensions, persist to DB, update status."""
+    PDF_SCALE = RASTER_DPI / 72.0  # PDF points → image pixels
     db: Session = SessionLocal()
     try:
         for drawing_id, pdf_path in drawing_paths:
@@ -175,8 +176,8 @@ def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> N
                         dim_type=DimensionType(dim.dim_type),
                         view_name=dim.view_name,
                         source=DimensionSource(dim.source),
-                        anchor_x=dim.anchor_x,
-                        anchor_y=dim.anchor_y,
+                        anchor_x=dim.anchor_x * PDF_SCALE if dim.anchor_x is not None else None,
+                        anchor_y=dim.anchor_y * PDF_SCALE if dim.anchor_y is not None else None,
                     )
                     db.add(record)
                 db.commit()
