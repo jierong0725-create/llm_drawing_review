@@ -102,55 +102,43 @@ class ExcludedRegion:
     bbox: tuple[int, int, int, int]
 
 
-@dataclass
-class StructureResult:
-    views: list[ViewRegion]
-    excluded: list[ExcludedRegion]
+_EXCLUDED_PROMPT = """You are an expert at reading engineering drawings.
 
+Scan the edges and corners of this drawing frame. Find every region that contains
+administrative/reference information rather than part-specific dimensions:
 
-# ── Phase 1: Structural analysis ──
-
-_STRUCTURE_PROMPT = """You are an expert at analyzing mechanical engineering drawings.
-
-Analyze this engineering drawing and return a JSON object identifying:
-1. VIEW regions — areas that contain part geometry projections with dimension annotations (主视图, 俯视图, section views, detail views, auxiliary views)
-2. EXCLUDED regions — areas that should NOT have dimension markers (title block / 标题栏, technical notes / 技术要求, parts list / 明细表)
-
-Rules for identifying views:
-- Views are large rectangular areas containing part outlines, hatched sections, center lines
-- View titles are typically positioned above or below the view (e.g., "A-A", "I", "II", "主视图")
-- Dimension lines, extension lines, and leader lines point INTO views
-- Each view region should generously encompass its geometry AND its dimensions
-
-Rules for identifying excluded regions:
-- Title block is at the bottom-right corner, has table-like layout with text fields
-- Technical notes are text blocks positioned along the left or bottom edge
-- Parts list / BOM table is typically above the title block
+- title_block: bottom-right corner, table-like layout with part number, material,
+  date, revision, company logo/name. ALWAYS mark this as excluded.
+- general_tolerance_notes: a box (typically right side) listing DIN/ISO standard
+  references, default Ra surface roughness values, edge tolerances, burr height
+  limits. ALWAYS mark this as excluded.
+- technical_notes: text blocks with NOTES:, MATERIAL SPECIFICATION, SURFACE
+  TREATMENT, CLEANLINESS, etc.
+- revision_block: a table listing engineering change history (Ind./Change/Date).
+- parts_list: a BOM table listing component items, usually above the title block.
 
 Return ONLY valid JSON (no markdown, no code fences):
-{
-  "views": [
-    {"name": "主视图", "bbox": [left, top, right, bottom]},
-    {"name": "A-A",   "bbox": [left, top, right, bottom]}
-  ],
+{{
   "excluded_regions": [
-    {"region_type": "title_block",     "bbox": [left, top, right, bottom]},
-    {"region_type": "technical_notes", "bbox": [left, top, right, bottom]}
+    {{"region_type": "title_block",             "bbox": [x1, y1, x2, y2]}},
+    {{"region_type": "general_tolerance_notes", "bbox": [x1, y1, x2, y2]}}
   ]
-}
+}}
 
-Coordinates are in image pixels. bbox = [x1, y1, x2, y2] where (x1,y1) is top-left, (x2,y2) is bottom-right.
+Coordinates are image pixels. bbox = [x1, y1, x2, y2] where (x1,y1) is top-left.
 The image is {width}x{height} pixels."""
 
+_STRUCTURE_MAX_DIM = 1600
 
-def analyze_structure(pdf_path: str) -> StructureResult:
-    """Phase 1: Full-page structural analysis. Returns views and excluded regions."""
+
+def detect_excluded_regions(pdf_path: str) -> list[ExcludedRegion]:
+    """Phase 1 (simplified): detect excluded regions only, no view detection."""
     if not _ANTHROPIC_AVAILABLE:
-        return StructureResult(views=[], excluded=[])
+        return []
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        return StructureResult(views=[], excluded=[])
+        return []
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -158,15 +146,27 @@ def analyze_structure(pdf_path: str) -> StructureResult:
         page = pdf.pages[0]
         page_img = page.to_image(resolution=_RESOLUTION)
         pil_img: Image.Image = page_img.original
-        w, h = pil_img.size
-        b64 = _image_to_base64(pil_img)
+        full_w, full_h = pil_img.size
 
-    prompt = _STRUCTURE_PROMPT.format(width=w, height=h)
+        longest = max(full_w, full_h)
+        if longest > _STRUCTURE_MAX_DIM:
+            ratio = _STRUCTURE_MAX_DIM / longest
+            send_img = pil_img.resize(
+                (int(full_w * ratio), int(full_h * ratio)), Image.LANCZOS
+            )
+        else:
+            ratio = 1.0
+            send_img = pil_img
+
+        send_w, send_h = send_img.size
+        b64 = _image_to_base64(send_img)
+
+    prompt = _EXCLUDED_PROMPT.format(width=send_w, height=send_h)
 
     try:
         response = client.messages.create(
             model=_MODEL,
-            max_tokens=2048,
+            max_tokens=512,
             messages=[
                 {
                     "role": "user",
@@ -186,43 +186,25 @@ def analyze_structure(pdf_path: str) -> StructureResult:
         )
         raw = response.content[0].text.strip()
         data = json.loads(raw)
-        result = _parse_structure_result(data, w, h)
-        if not result.views:
-            return StructureResult(views=[], excluded=[])
-        return result
+        upscale = 1.0 / ratio if ratio != 1.0 else 1.0
+        excluded: list[ExcludedRegion] = []
+        for e in data.get("excluded_regions", []):
+            bbox = e.get("bbox", [])
+            if len(bbox) != 4:
+                continue
+            l, t, r, b = bbox
+            if not (0 <= l < r <= send_w and 0 <= t < b <= send_h):
+                continue
+            excluded.append(ExcludedRegion(
+                region_type=str(e.get("region_type", "")),
+                bbox=(
+                    int(l * upscale), int(t * upscale),
+                    int(r * upscale), int(b * upscale),
+                ),
+            ))
+        return excluded
     except (json.JSONDecodeError, KeyError, ValueError):
-        return StructureResult(views=[], excluded=[])
-
-
-def _parse_structure_result(data: dict, img_w: int, img_h: int) -> StructureResult:
-    views: list[ViewRegion] = []
-    for v in data.get("views", []):
-        bbox = v.get("bbox", [])
-        if len(bbox) != 4:
-            continue
-        l, t, r, b = bbox
-        if not (0 <= l < r <= img_w and 0 <= t < b <= img_h):
-            continue
-        area = (r - l) * (b - t)
-        min_area = img_w * img_h * 0.02  # min 2% of page
-        if area < min_area:
-            continue
-        views.append(ViewRegion(name=str(v.get("name", "")), bbox=(l, t, r, b), page=1))
-
-    excluded: list[ExcludedRegion] = []
-    for e in data.get("excluded_regions", []):
-        bbox = e.get("bbox", [])
-        if len(bbox) != 4:
-            continue
-        l, t, r, b = bbox
-        if not (0 <= l < r <= img_w and 0 <= t < b <= img_h):
-            continue
-        excluded.append(ExcludedRegion(
-            region_type=str(e.get("region_type", "")),
-            bbox=(l, t, r, b),
-        ))
-
-    return StructureResult(views=views, excluded=excluded)
+        return []
 
 
 # ── Phase 2b: Per-view LLM extraction ──
