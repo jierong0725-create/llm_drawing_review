@@ -28,20 +28,41 @@ const DIM_COLORS = STATUS_COLOR;
 // Lightweight rectangle drawn around a dimension's token bbox (PDF-pixel coords).
 // Rotates with the dimension text; badge sits at the outer top-left corner.
 function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContextMenu }) {
-  const x = dim.bbox_x0 * zoom + offsetX;
-  const y = dim.bbox_y0 * zoom + offsetY;
-  const w = (dim.bbox_x1 - dim.bbox_x0) * zoom;
-  const h = (dim.bbox_y1 - dim.bbox_y0) * zoom;
   const color = STATUS_COLOR[dim.review_status] || STATUS_COLOR.pending;
   const labelFont = Math.round(Math.max(8, Math.min(10, 9 / Math.sqrt(Math.max(zoom, 0.15)))));
   const labelH = labelFont + 3;
   const rot = Number(dim.rotation_deg) || 0;
 
-  const rectW = Math.max(w + 4, 8);
-  const rectH = Math.max(h + 4, 8);
+  // AABB center in screen coords (rotation preserves center)
+  const cx = ((dim.bbox_x0 + dim.bbox_x1) / 2) * zoom + offsetX;
+  const cy = ((dim.bbox_y0 + dim.bbox_y1) / 2) * zoom + offsetY;
+
+  // Recover oriented (tight) bbox from AABB + rotation angle.
+  // For a rect of size (obbW, obbH) rotated by θ:
+  //   aabbW = obbW*|cosθ| + obbH*|sinθ|
+  //   aabbH = obbW*|sinθ| + obbH*|cosθ|
+  // Solving: obbW = (aabbW*c - aabbH*s) / cos2θ  (c=cosθ, s=sinθ, cos2θ=c²-s²)
+  const aabbW = (dim.bbox_x1 - dim.bbox_x0) * zoom;
+  const aabbH = (dim.bbox_y1 - dim.bbox_y0) * zoom;
+  const rotRad = Math.abs(rot * Math.PI / 180);
+  const c = Math.cos(rotRad), s = Math.sin(rotRad);
+  const cos2t = c * c - s * s;
+  let obbW, obbH;
+  if (Math.abs(cos2t) > 0.05) {
+    obbW = Math.max(Math.abs((aabbW * c - aabbH * s) / cos2t), 4);
+    obbH = Math.max(Math.abs((aabbH * c - aabbW * s) / cos2t), 4);
+  } else {
+    // Near 45°: AABB is square, use half-diagonal as approximation
+    const d = Math.hypot(aabbW, aabbH);
+    obbW = Math.max(d * 0.707, 4);
+    obbH = Math.max(d * 0.707, 4);
+  }
+
+  const rectW = obbW + 4;
+  const rectH = obbH + 4;
   const badgeW = String(dim.sequence).length * (labelFont * 0.6) + 6;
 
-  // transformOrigin = rectangle center within wrapper
+  // transformOrigin = rectangle center within wrapper (badge is to the left)
   const originX = badgeW + rectW / 2;
   const originY = rectH / 2;
 
@@ -50,8 +71,8 @@ function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContext
       data-marker="true"
       style={{
         position: "absolute",
-        left: x - 2 - badgeW,
-        top: y - 2,
+        left: cx - badgeW - rectW / 2,
+        top: cy - rectH / 2,
         width: badgeW + rectW,
         height: rectH,
         transform: `rotate(${-rot}deg)`,
