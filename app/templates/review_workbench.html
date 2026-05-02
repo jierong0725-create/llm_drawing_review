@@ -26,14 +26,13 @@ const DIM_COLORS = STATUS_COLOR;
 
 // ── MarkerBox ──────────────────────────────────────────────────────────────────
 // Lightweight rectangle drawn around a dimension's token bbox (PDF-pixel coords).
-// Rotates with the dimension text and places the sequence badge at the text start.
+// Rotates with the dimension text; badge sits at the outer top-left corner.
 function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContextMenu }) {
   const x = dim.bbox_x0 * zoom + offsetX;
   const y = dim.bbox_y0 * zoom + offsetY;
   const w = (dim.bbox_x1 - dim.bbox_x0) * zoom;
   const h = (dim.bbox_y1 - dim.bbox_y0) * zoom;
   const color = STATUS_COLOR[dim.review_status] || STATUS_COLOR.pending;
-  const isPending = dim.review_status === "pending" || !dim.review_status;
   const labelFont = Math.round(Math.max(8, Math.min(10, 9 / Math.sqrt(Math.max(zoom, 0.15)))));
   const labelH = labelFont + 3;
   const rot = Number(dim.rotation_deg) || 0;
@@ -42,33 +41,32 @@ function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContext
   const rectH = Math.max(h + 4, 8);
   const badgeW = String(dim.sequence).length * (labelFont * 0.6) + 6;
 
-  // transformOrigin is the center of the rectangle within the wrapper
-  const originX = badgeW + 2 + rectW / 2;
-  const originY = rectH / 2;
+  // transformOrigin = rectangle center within wrapper
+  const originX = badgeW + rectW / 2;
+  const originY = labelH + rectH / 2;
 
   return (
     <div
       data-marker="true"
       style={{
         position: "absolute",
-        left: x - 2 - badgeW - 2,
-        top: y - 2,
-        width: rectW + badgeW + 2,
-        height: rectH,
+        left: x - 2 - badgeW,
+        top: y - 2 - labelH,
+        width: badgeW + rectW,
+        height: labelH + rectH,
         transform: `rotate(${-rot}deg)`,
         transformOrigin: `${originX}px ${originY}px`,
         pointerEvents: "none",
         zIndex: isSelected ? 25 : 10,
       }}
     >
-      {/* badge — left side (text start) */}
+      {/* badge — top-left outer corner */}
       <div
         data-marker="true"
         onClick={e => { e.stopPropagation(); onClick(dim.id); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
         style={{
-          position: "absolute", left: 0, top: "50%",
-          transform: "translateY(-50%)",
+          position: "absolute", left: 0, top: 0,
           height: labelH, padding: "0 3px",
           backgroundColor: color, color: "#fff",
           fontFamily: "var(--font-mono)", fontSize: labelFont, fontWeight: 700,
@@ -87,11 +85,11 @@ function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContext
         onClick={e => { e.stopPropagation(); onClick(dim.id); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
         style={{
-          position: "absolute", left: badgeW + 2, top: 0,
+          position: "absolute", left: badgeW, top: labelH,
           width: rectW, height: rectH,
           border: `${isSelected ? 2.5 : 1.5}px solid ${color}`,
           borderRadius: 2,
-          backgroundColor: isSelected ? "rgba(255,255,255,0.04)" : (isPending ? "var(--signal-highlight-soft)" : "transparent"),
+          backgroundColor: "transparent",
           boxShadow: isSelected ? `0 0 0 3px var(--accent-dim)` : "none",
           cursor: "pointer", pointerEvents: "auto",
           boxSizing: "border-box",
