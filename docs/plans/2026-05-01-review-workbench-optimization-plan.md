@@ -1,9 +1,23 @@
-{% extends "spa.html" %}
-{% block scripts %}
-<script type="text/babel">
-{% raw %}
-const { useState, useEffect, useRef, useCallback, useMemo } = React;
+# 审核工作台优化实现计划
 
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** 对齐参考设计 `llm_drawing_review.html`，全面优化审核工作台页面的视觉和功能
+
+**Architecture:** 只改一个文件 `review_workbench.html`。保留现有 REST API 调用和数据结构。视觉上使用 CSS 变量主题体系。按组件模块化新增/重写，不破坏现有数据加载逻辑。
+
+**Tech Stack:** React 18 + Babel standalone (in-browser JSX), Jinja2 template with `{% raw %}` blocks
+
+---
+
+### Task 1: 添加辅助函数和常量
+
+**Files:**
+- Modify: `app/templates/review_workbench.html:5-55` (开头区域)
+
+**Step 1: 在 `{% raw %}` 内，`const { useState... } = React;` 之后，添加按钮风格辅助函数**
+
+```javascript
 function btnStyle(variant, extra = {}) {
   const base = { border:"none", borderRadius:4, cursor:"pointer", fontWeight:600, padding:"6px 14px", fontSize:12, transition:"all 0.15s" };
   const variants = {
@@ -14,93 +28,51 @@ function btnStyle(variant, extra = {}) {
   };
   return { ...base, ...(variants[variant]||{}), ...extra };
 }
+```
 
+**Step 2: 统一 STATUS_COLOR 和 REVIEW_STATUSES**
+
+将现有的 `REVIEW_STATUSES` 和局部 `colorMap` 合并为全局常量：
+
+```javascript
 const STATUS_COLOR = {
-  pending: "var(--signal-highlight)",
+  pending: "var(--signal-gray)",
   confirmed: "var(--signal-green)",
   questionable: "var(--signal-amber)",
   rejected: "var(--signal-red)",
   nok: "var(--signal-red)",
 };
 const DIM_COLORS = STATUS_COLOR;
+const REVIEW_STATUSES = [
+  { value: "confirmed",    label: "确认/OK",  color: "var(--signal-green)" },
+  { value: "questionable", label: "存疑",     color: "var(--signal-amber)" },
+  { value: "rejected",     label: "驳回/NOK", color: "var(--signal-red)"   },
+  { value: "pending",      label: "待审",     color: "var(--signal-gray)"  },
+];
+```
 
-// ── MarkerBox ──────────────────────────────────────────────────────────────────
-// Lightweight rectangle drawn around a dimension's token bbox (PDF-pixel coords).
-// Rotates with the dimension text; badge sits at the outer top-left corner.
-function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContextMenu }) {
-  const color = STATUS_COLOR[dim.review_status] || STATUS_COLOR.pending;
-  const labelFont = Math.round(Math.max(8, Math.min(10, 9 / Math.sqrt(Math.max(zoom, 0.15)))));
-  const labelH = labelFont + 3;
-  const rot = Number(dim.rotation_deg) || 0;
+**Step 3: 写完后确认文件没有语法错误**
 
-  // bbox now stores OBB dimensions (cx ± obbW/2, cy ± obbH/2) — use directly.
-  const cx = ((dim.bbox_x0 + dim.bbox_x1) / 2) * zoom + offsetX;
-  const cy = ((dim.bbox_y0 + dim.bbox_y1) / 2) * zoom + offsetY;
-  const rectW = Math.max((dim.bbox_x1 - dim.bbox_x0) * zoom + 4, 8);
-  const rectH = Math.max((dim.bbox_y1 - dim.bbox_y0) * zoom + 4, 8);
-  const badgeW = String(dim.sequence).length * (labelFont * 0.6) + 6;
+不必单独运行，等全写完后再验证。
 
-  // transformOrigin = rectangle center within wrapper (badge is to the left)
-  const originX = badgeW + rectW / 2;
-  const originY = rectH / 2;
+---
 
-  return (
-    <div
-      data-marker="true"
-      style={{
-        position: "absolute",
-        left: cx - badgeW - rectW / 2,
-        top: cy - rectH / 2,
-        width: badgeW + rectW,
-        height: rectH,
-        transform: `rotate(${-rot}deg)`,
-        transformOrigin: `${originX}px ${originY}px`,
-        pointerEvents: "none",
-        zIndex: isSelected ? 25 : 10,
-      }}
-    >
-      {/* badge — top-right aligns with rectangle top-left */}
-      <div
-        data-marker="true"
-        onClick={e => { e.stopPropagation(); onClick(dim.id); }}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
-        style={{
-          position: "absolute", left: 0, top: 0,
-          height: labelH, padding: "0 3px",
-          backgroundColor: color, color: "#fff",
-          fontFamily: "var(--font-mono)", fontSize: labelFont, fontWeight: 700,
-          lineHeight: `${labelH}px`,
-          borderRadius: 2,
-          cursor: "pointer", pointerEvents: "auto",
-          whiteSpace: "nowrap",
-        }}
-        title={`#${dim.sequence} ${dim.value}`}
-      >
-        {dim.sequence}
-      </div>
-      {/* rectangle */}
-      <div
-        data-marker="true"
-        onClick={e => { e.stopPropagation(); onClick(dim.id); }}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
-        style={{
-          position: "absolute", left: badgeW, top: 0,
-          width: rectW, height: rectH,
-          border: `${isSelected ? 2.5 : 1.5}px solid ${color}`,
-          borderRadius: 2,
-          backgroundColor: "transparent",
-          boxShadow: isSelected ? `0 0 0 3px var(--accent-dim)` : "none",
-          cursor: "pointer", pointerEvents: "auto",
-          boxSizing: "border-box",
-        }}
-        title={`#${dim.sequence} ${dim.value}`}
-      />
-    </div>
-  );
-}
+### Task 2: 重写 MarkerLabel（圆形 + SVG 引线）
 
-// ── MarkerLabel ────────────────────────────────────────────────────────────────
-// Legacy circle marker — used as fallback when a dimension lacks bbox coords.
+**Files:**
+- Modify: `app/templates/review_workbench.html` (替换现有 MarkerLabel)
+
+**Step 1: 替换现有 MarkerLabel 为参考文件实现**
+
+关键变化：
+- 形状从方形改为圆形（`borderRadius: "50%"`）
+- 尺寸公式：`Math.round(Math.max(20, Math.min(32, 24 / Math.sqrt(Math.max(zoom, 0.15)))))`
+- 字号公式：`Math.round(Math.max(9, Math.min(13, 10 / Math.sqrt(Math.max(zoom, 0.15)))))`
+- 新增 SVG 引线：连接标记位置 `(cx, cy)` 到原始锚点 `(tx, ty)`，仅当两者距离 > size*0.6 时显示
+- 选中态：scale(1.18) + 外发光 `0 0 0 4px var(--accent-dim)`
+- 引线样式：选中时实线 strokeWidth=1.5，未选中虚线 strokeDasharray="4 3"
+
+```javascript
 function MarkerLabel({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContextMenu, originalX, originalY }) {
   const cx = dim.anchor_x * zoom + offsetX;
   const cy = dim.anchor_y * zoom + offsetY;
@@ -151,237 +123,84 @@ function MarkerLabel({ dim, zoom, offsetX, offsetY, isSelected, onClick, onConte
     </>
   );
 }
+```
 
-const pathParts = window.location.pathname.split("/");
-const partId = Number(pathParts[2]);
-const versionId = Number(pathParts[4]);
+**Step 2: 更新 DrawingCanvas 中 MarkerLabel 的调用**
 
-// ── 状态配置 ────────────────────────────────────────────────────────────────
-const REVIEW_STATUSES = [
-  { value: "confirmed",    label: "确认/OK",  color: "var(--signal-green)" },
-  { value: "questionable", label: "存疑",     color: "var(--signal-amber)" },
-  { value: "rejected",     label: "驳回/NOK", color: "var(--signal-red)"   },
-  { value: "pending",      label: "待审",     color: "var(--signal-gray)"  },
-];
+传新增的 `originalX`/`originalY` prop：
 
-// ── usePanZoom ───────────────────────────────────────────────────────────────
-function usePanZoom(containerRef) {
-  const [zoom, setZoom] = useState(0.85);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const isPanning = useRef(false);
-  const lastMouse = useRef({ x: 0, y: 0 });
+```javascript
+{dim => (
+  <MarkerLabel key={dim.id}
+    dim={{ ...dim, anchor_x: dim.anchor_x+dim._gx, anchor_y: dim.anchor_y+dim._gy }}
+    originalX={dim.anchor_x} originalY={dim.anchor_y}
+    zoom={zoom} offsetX={offset.x} offsetY={offset.y}
+    isSelected={dim.id === selectedDimId}
+    onClick={onSelectDim}
+    onContextMenu={!readOnly ? onContextMenuDim : undefined}
+  />
+)}
+```
 
-  const fitScreen = useCallback((imgEl) => {
-    const c = containerRef.current;
-    if (!c) return;
-    const el = imgEl || c.querySelector("img");
-    if (!el || !el.naturalWidth) { setZoom(1); setOffset({ x: 0, y: 0 }); return; }
-    const scale = Math.min(c.clientWidth / el.naturalWidth, c.clientHeight / el.naturalHeight, 1.5) * 0.92;
-    setZoom(scale);
-    setOffset({ x: (c.clientWidth - el.naturalWidth * scale) / 2, y: (c.clientHeight - el.naturalHeight * scale) / 2 });
-  }, [containerRef]);
+---
 
-  const handleWheel = useCallback(e => {
-    e.preventDefault();
-    const factor = e.deltaY > 0 ? 0.91 : 1.1;
-    setZoom(z => {
-      const nz = Math.min(10, Math.max(0.1, z * factor));
-      const rect = containerRef.current.getBoundingClientRect();
-      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      setOffset(o => ({ x: mx - (mx - o.x) * (nz / z), y: my - (my - o.y) * (nz / z) }));
-      return nz;
-    });
-  }, [containerRef]);
+### Task 3: 增强 DrawingCanvas（缩放工具栏 + 指引线 + HintBar）
 
-  const onMouseDown = useCallback(e => {
-    if (e.button !== 0) return;
-    if (e.target.closest("[data-marker]")) return;
-    isPanning.current = true;
-    lastMouse.current = { x: e.clientX, y: e.clientY };
-    e.currentTarget.style.cursor = "grabbing";
-  }, []);
+**Files:**
+- Modify: `app/templates/review_workbench.html` (DrawingCanvas 组件)
 
-  const onMouseMove = useCallback(e => {
-    if (!isPanning.current) return;
-    const dx = e.clientX - lastMouse.current.x, dy = e.clientY - lastMouse.current.y;
-    lastMouse.current = { x: e.clientX, y: e.clientY };
-    setOffset(o => ({ x: o.x + dx, y: o.y + dy }));
-  }, []);
+**Step 1: 替换缩放工具栏**
 
-  const onMouseUp = useCallback(e => {
-    isPanning.current = false;
-    if (e.currentTarget) e.currentTarget.style.cursor = "grab";
-  }, []);
+从简单文本改为带 SVG 图标的工具栏：
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheel);
-  }, [handleWheel]);
+```javascript
+<div style={{ position:"absolute", top:10, right:10, zIndex:30,
+  display:"flex", alignItems:"center", gap:4,
+  background:"rgba(255,255,255,0.85)", border:"1px solid var(--border-color)",
+  borderRadius:5, padding:"3px 6px", backdropFilter:"blur(4px)" }}>
+  <button onClick={e=>{e.stopPropagation(); fitScreen();}} style={iconBtn} title="适应窗口">
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M1 4V1h3M9 1h3v3M12 9v3h-3M4 12H1V9"/>
+    </svg>
+  </button>
+  <div style={{ width:1, height:14, background:"var(--border-color)" }} />
+  <span style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--ink-secondary)", minWidth:38, textAlign:"center" }}>
+    {Math.round(zoom*100)}%
+  </span>
+  <div style={{ width:1, height:14, background:"var(--border-color)" }} />
+  <button onClick={e=>{e.stopPropagation();}} style={iconBtn} title="双击图纸适应窗口 · 滚轮缩放 · 拖拽平移">?</button>
+</div>
+```
 
-  return { zoom, offset, fitScreen, onMouseDown, onMouseMove, onMouseUp, setOffset, setZoom };
-}
+添加 `iconBtn` 常量（在组件外）：
 
-// ── 标注重叠分离 ─────────────────────────────────────────────────────────────
-function applyRepulsion(dims, zoom) {
-  if (zoom >= 0.55) return dims.map(d => ({ ...d, _gx: 0, _gy: 0 }));
-  const gap = 30 / Math.max(zoom, 0.1);
-  const adj = dims.map(d => ({ ...d, _gx: 0, _gy: 0 }));
-  for (let iter = 0; iter < 12; iter++) {
-    let moved = false;
-    for (let i = 0; i < adj.length; i++) {
-      for (let j = i + 1; j < adj.length; j++) {
-        const dx = (adj[i].anchor_x + adj[i]._gx) - (adj[j].anchor_x + adj[j]._gx);
-        const dy = (adj[i].anchor_y + adj[i]._gy) - (adj[j].anchor_y + adj[j]._gy);
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < gap && dist > 0.01) {
-          const p = (gap - dist) / dist * 0.5;
-          adj[i]._gx += dx * p; adj[i]._gy += dy * p;
-          adj[j]._gx -= dx * p; adj[j]._gy -= dy * p;
-          moved = true;
-        }
-      }
-    }
-    if (!moved) break;
-  }
-  return adj;
-}
-
-// ── ContextMenu ──────────────────────────────────────────────────────────────
-function ContextMenu({ x, y, dim, onClose, onStatusChange }) {
-  const menuRef = useRef(null);
-  const [pos, setPos] = useState({ x, y });
-
-  useEffect(() => {
-    const handler = () => onClose();
-    window.addEventListener("click", handler);
-    return () => window.removeEventListener("click", handler);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    setPos({
-      x: x + rect.width > window.innerWidth ? window.innerWidth - rect.width - 8 : x,
-      y: y + rect.height > window.innerHeight ? window.innerHeight - rect.height - 8 : y,
-    });
-  }, [x, y]);
-
-  const items = REVIEW_STATUSES.filter(s => s.value !== dim.review_status);
-
-  return (
-    <div ref={menuRef} className="ctx-menu" style={{ left: pos.x, top: pos.y }} onClick={e => e.stopPropagation()}>
-      <div style={{ padding: "4px 10px 6px", fontSize: 10, color: "var(--ink-disabled)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-        #{String(dim.sequence).padStart(2, "0")} {dim.value}
-      </div>
-      <div className="ctx-divider" />
-      {items.map(it => (
-        <div key={it.value} className="ctx-item" onClick={() => { onStatusChange(dim.id, it.value); onClose(); }}>
-          <span className="ctx-dot" style={{ background: it.color }} />
-          {it.label}
-        </div>
-      ))}
-    </div>
-  );
-}
-
+```javascript
 const iconBtn = {
   background:"transparent", border:"none", color:"var(--ink-secondary)",
   cursor:"pointer", padding:"2px 4px", borderRadius:3, display:"flex", alignItems:"center",
   fontSize:11,
 };
+```
 
-// ── DrawingCanvas ────────────────────────────────────────────────────────────
-function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim, onContextMenuDim, readOnly }) {
-  const containerRef = useRef(null);
-  const { zoom, offset, fitScreen, onMouseDown, onMouseMove, onMouseUp } = usePanZoom(containerRef);
-  const [imageError, setImageError] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
+**Step 2: 添加低缩放指引线（在 MarkerLabel 之前渲染）**
 
-  useEffect(() => { setImageError(false); fitScreen(); }, [drawing?.id]);
+```javascript
+{showGuides && (
+  <svg style={{ position:"absolute", inset:0, width:"100%", height:"100%", pointerEvents:"none", zIndex:5 }}>
+    {adjustedDims.filter(d => Math.abs(d._gx)>2||Math.abs(d._gy)>2).map(d => (
+      <line key={`g-${d.id}`}
+        x1={(d.anchor_x+d._gx)*zoom+offset.x} y1={(d.anchor_y+d._gy)*zoom+offset.y}
+        x2={d.anchor_x*zoom+offset.x} y2={d.anchor_y*zoom+offset.y}
+        stroke="var(--ink-disabled)" strokeWidth={0.8} strokeDasharray="3 3" opacity={0.5}
+      />
+    ))}
+  </svg>
+)}
+```
 
-  const showGuides = zoom < 0.5;
-  const adjustedDims = useMemo(() =>
-    showGuides ? applyRepulsion(dims, zoom) : dims.map(d => ({ ...d, _gx: 0, _gy: 0 })),
-    [dims, zoom, showGuides]
-  );
+**Step 3: 添加 HintBar（容器底部）**
 
-  const imgSrc = drawing ? `/static/drawings/${drawing.id}/page_1.jpg?t=${reloadKey}` : null;
-
-  return (
-    <div
-      ref={containerRef}
-      onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-      onDoubleClick={() => fitScreen()}
-      style={{ flex: 1, position: "relative", overflow: "hidden", background: "#e8eaed", cursor: "grab" }}
-    >
-      <div style={{ position:"absolute", top:10, right:10, zIndex:30,
-        display:"flex", alignItems:"center", gap:4,
-        background:"rgba(255,255,255,0.85)", border:"1px solid var(--border-color)",
-        borderRadius:5, padding:"3px 6px", backdropFilter:"blur(4px)" }}>
-        <button onClick={e=>{e.stopPropagation(); fitScreen();}} style={iconBtn} title="适应窗口">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M1 4V1h3M9 1h3v3M12 9v3h-3M4 12H1V9"/>
-          </svg>
-        </button>
-        <div style={{ width:1, height:14, background:"var(--border-color)" }} />
-        <span style={{ fontSize:11, fontFamily:"var(--font-mono)", color:"var(--ink-secondary)", minWidth:38, textAlign:"center" }}>
-          {Math.round(zoom*100)}%
-        </span>
-        <div style={{ width:1, height:14, background:"var(--border-color)" }} />
-        <button onClick={e=>{e.stopPropagation();}} style={iconBtn} title="双击图纸适应窗口 · 滚轮缩放 · 拖拽平移">?</button>
-      </div>
-      {imageError ? (
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--ink-disabled)" }}>
-          <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.5 }}>📐</div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink-secondary)", marginBottom: 4 }}>图纸图片未生成</div>
-          <div style={{ fontSize: 12, marginBottom: 16 }}>请重新上传版本或点击下方按钮重新生成</div>
-          <button onClick={async () => {
-            const resp = await fetch(`/parts/${partId}/versions/${versionId}/reprocess`, { method: "POST" });
-            if (resp.ok) { setReloadKey(k => k + 1); setImageError(false); }
-          }} style={{ padding: "6px 20px", background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>重新生成图片</button>
-        </div>
-      ) : imgSrc && (
-        <img src={imgSrc} onError={() => setImageError(true)} onLoad={e => fitScreen(e.target)}
-          style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", userSelect: "none", transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`, transformOrigin: "0 0" }}
-          draggable={false} />
-      )}
-      {showGuides && (
-        <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 5 }}>
-          {adjustedDims.filter(d => Math.abs(d._gx) > 2 || Math.abs(d._gy) > 2).map(d => (
-            <line key={`g-${d.id}`}
-              x1={(d.anchor_x + d._gx) * zoom + offset.x} y1={(d.anchor_y + d._gy) * zoom + offset.y}
-              x2={d.anchor_x * zoom + offset.x} y2={d.anchor_y * zoom + offset.y}
-              stroke="var(--ink-disabled)" strokeWidth={0.8} strokeDasharray="3 3" opacity={0.5} />
-          ))}
-        </svg>
-      )}
-      {adjustedDims.map(d => (
-        d.bbox_x0 != null && d.bbox_x1 != null ? (
-          <MarkerBox key={d.id}
-            dim={d}
-            zoom={zoom} offsetX={offset.x} offsetY={offset.y}
-            isSelected={d.id === selectedDimId}
-            onClick={onSelectDim}
-            onContextMenu={!readOnly ? onContextMenuDim : undefined}
-          />
-        ) : (
-          <MarkerLabel key={d.id}
-            dim={{ ...d, anchor_x: d.anchor_x + d._gx, anchor_y: d.anchor_y + d._gy }}
-            originalX={d.anchor_x} originalY={d.anchor_y}
-            zoom={zoom} offsetX={offset.x} offsetY={offset.y}
-            isSelected={d.id === selectedDimId}
-            onClick={onSelectDim}
-            onContextMenu={!readOnly ? onContextMenuDim : undefined}
-          />
-        )
-      ))}
-      <HintBar />
-    </div>
-  );
-}
-
+```javascript
 function HintBar() {
   const [visible, setVisible] = React.useState(true);
   React.useEffect(() => {
@@ -401,7 +220,16 @@ function HintBar() {
     </div>
   );
 }
+```
 
+---
+
+### Task 4: 添加 ReviewProgress 组件
+
+**Files:**
+- Modify: `app/templates/review_workbench.html` (在 MarkerLabel 附近，组件区域)
+
+```javascript
 function ReviewProgress({ dims }) {
   const total = dims.length;
   const confirmed    = dims.filter(d=>d.review_status==="confirmed").length;
@@ -443,7 +271,13 @@ function ReviewProgress({ dims }) {
     </div>
   );
 }
+```
 
+---
+
+### Task 5: 添加 Stamp 组件
+
+```javascript
 function Stamp({ type, date }) {
   const ok = type === "approved";
   return (
@@ -463,10 +297,16 @@ function Stamp({ type, date }) {
     </div>
   );
 }
+```
 
+---
+
+### Task 6: 添加 AIBadge 组件
+
+```javascript
 function AIBadge({ suggestion }) {
   const [expanded, setExpanded] = useState(false);
-  const [result] = useState(suggestion);
+  const [result, setResult] = useState(suggestion);
 
   return (
     <div style={{
@@ -480,24 +320,13 @@ function AIBadge({ suggestion }) {
     </div>
   );
 }
+```
 
-// ── DrawingTabs ──────────────────────────────────────────────────────────────
-function DrawingTabs({ drawings, activeDrawingId, onSelect }) {
-  return (
-    <div style={{ display: "flex", gap: 1, background: "var(--bg-surface)", borderBottom: "1px solid var(--border-color)", padding: "0 12px", overflowX: "auto" }}>
-      {drawings.map(d => (
-        <button key={d.id} onClick={() => onSelect(d.id)} style={{
-          padding: "6px 14px", background: "transparent", border: "none",
-          borderBottom: `2px solid ${d.id === activeDrawingId ? "var(--accent-primary)" : "transparent"}`,
-          cursor: "pointer", fontSize: 12,
-          color: d.id === activeDrawingId ? "var(--ink)" : "var(--ink-secondary)",
-          whiteSpace: "nowrap",
-        }}>图纸 {d.sequence} · {d.filename}</button>
-      ))}
-    </div>
-  );
-}
+---
 
+### Task 7: 添加 ConclusionBar 组件
+
+```javascript
 function ConclusionBar({ dims, versionInfo, onConfirm, notes, onNotesChange }) {
   const [showConfirm, setShowConfirm] = useState(null);
   const counts = useMemo(() => ({
@@ -562,7 +391,18 @@ function ConclusionBar({ dims, versionInfo, onConfirm, notes, onNotesChange }) {
     </div>
   );
 }
+```
 
+---
+
+### Task 8: 构建 PanelA（右侧集成面板）
+
+**Files:**
+- Modify: `app/templates/review_workbench.html` (在 App 之前，替换现有的 DimensionList/DimensionDetail/DiscussionThread)
+
+PanelA 集成筛选、列表、详情、讨论、结论栏于一体。参考 `llm_drawing_review.html` 的 PanelA 实现，但将消息数据改为通过 API 获取（保留现有 DiscussionThread 的数据流）。
+
+```javascript
 function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, versionInfo, onConfirm, readOnly }) {
   const [filter, setFilter] = useState("all");
   const [messages, setMessages] = useState({});
@@ -574,27 +414,7 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
   const selectedDim = dims.find(d => d.id === selectedDimId);
   const msgs = selectedDim ? (messages[selectedDim.id] || []) : [];
 
-  // Group dimensions by view_name for view-aware display
-  const viewGroups = useMemo(() => {
-    const groups = {};
-    for (const d of filtered) {
-      const key = d.view_name || "未归属";
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(d);
-    }
-    // Preserve first-appearance order from filtered list
-    const order = [];
-    const seen = new Set();
-    for (const d of filtered) {
-      const key = d.view_name || "未归属";
-      if (!seen.has(key)) {
-        seen.add(key);
-        order.push(key);
-      }
-    }
-    return order.map(name => ({ name, dims: groups[name] }));
-  }, [filtered]);
-
+  // Load messages when a dim is selected
   useEffect(() => {
     if (!selectedDimId) return;
     fetch(`/api/dimensions/${selectedDimId}/messages`).then(r => r.json()).then(data => {
@@ -614,8 +434,16 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
     } finally { setSending(false); }
   };
 
+  const statusConfig = {
+    pending:      { label:"待审",  color:"var(--signal-gray)" },
+    confirmed:    { label:"确认",  color:"var(--signal-green)" },
+    questionable: { label:"存疑",  color:"var(--signal-amber)" },
+    rejected:     { label:"NOK",   color:"var(--signal-red)" },
+  };
+
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden" }}>
+      {/* Filter bar */}
       <div style={{ display:"flex", alignItems:"center", gap:0, borderBottom:"1px solid var(--border-color)", padding:"0 12px", flexShrink:0 }}>
         {[["all","全部"],["pending","待审"],["confirmed","确认"],["questionable","存疑"],["rejected","NOK"]].map(([v,l]) => (
           <button key={v} onClick={() => { setFilter(v); onSelectDim && onSelectDim(null); }} style={{
@@ -630,52 +458,40 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
         </span>
       </div>
 
+      {/* Dim list */}
       <div style={{ flex:"0 0 auto", maxHeight:220, overflowY:"auto" }}>
         {filtered.length === 0
           ? <div style={{ padding:20, textAlign:"center", color:"var(--ink-disabled)", fontSize:11 }}>暂无标注</div>
-          : viewGroups.map(group => (
-            <div key={group.name}>
-              <div style={{
-                padding:"6px 14px", fontSize:10, fontWeight:600,
-                color:"var(--ink-secondary)", textTransform:"uppercase",
-                letterSpacing:"0.06em",
-                background:"var(--bg-elevated)", borderBottom:"1px solid var(--border-color)",
-                display:"flex", alignItems:"center", gap:6,
-              }}>
-                <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1" stroke="currentColor" fill="none" strokeWidth="1"/></svg>
-                {group.name}
-                <span style={{ marginLeft:"auto", color:"var(--ink-disabled)" }}>{group.dims.length}</span>
-              </div>
-              {group.dims.map(d => (
-                <div key={d.id} onClick={() => onSelectDim(d.id)} style={{
-                  display:"flex", alignItems:"center", gap:8,
-                  padding:"7px 12px", cursor:"pointer",
-                  background: d.id === selectedDimId ? "var(--bg-selected)" : "transparent",
-                  borderBottom:"1px solid var(--border-color)", transition:"background 0.1s",
-                }}>
-                  <span style={{
-                    width:20, height:20, borderRadius:3, flexShrink:0,
-                    background: STATUS_COLOR[d.review_status] || STATUS_COLOR.pending,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:9, fontWeight:700, color:"#fff", fontFamily:"var(--font-mono)",
-                  }}>{d.sequence}</span>
-                  <span style={{ fontFamily:"var(--font-mono)", fontSize:12, flex:1, color:"var(--ink)" }}>{d.value}</span>
-                  {d.message_count > 0 && (
-                    <span style={{ fontSize:9, background:"var(--accent-primary)", color:"#1a1a1a",
-                      borderRadius:2, minWidth:15, height:15,
-                      display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700,
-                    }}>{d.message_count}</span>
-                  )}
-                  {showAI && d.ai_suggestion && <span style={{ fontSize:9, color:"var(--accent-primary)", fontWeight:700 }}>AI</span>}
-                </div>
-              ))}
+          : filtered.map(d => (
+            <div key={d.id} onClick={() => onSelectDim(d.id)} style={{
+              display:"flex", alignItems:"center", gap:8,
+              padding:"7px 12px", cursor:"pointer",
+              background: d.id === selectedDimId ? "var(--bg-selected)" : "transparent",
+              borderBottom:"1px solid var(--border-color)", transition:"background 0.1s",
+            }}>
+              <span style={{
+                width:20, height:20, borderRadius:3, flexShrink:0,
+                background: STATUS_COLOR[d.review_status] || STATUS_COLOR.pending,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:9, fontWeight:700, color:"#fff", fontFamily:"var(--font-mono)",
+              }}>{d.sequence}</span>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:12, flex:1, color:"var(--ink)" }}>{d.value}</span>
+              {d.message_count > 0 && (
+                <span style={{ fontSize:9, background:"var(--accent-primary)", color:"#1a1a1a",
+                  borderRadius:2, minWidth:15, height:15,
+                  display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700,
+                }}>{d.message_count}</span>
+              )}
+              {showAI && d.ai_suggestion && <span style={{ fontSize:9, color:"var(--accent-primary)", fontWeight:700 }}>AI</span>}
             </div>
           ))
         }
       </div>
 
+      {/* Divider */}
       <div style={{ height:1, background:"var(--border-strong)", flexShrink:0 }} />
 
+      {/* Detail area */}
       <div style={{ flex:1, overflowY:"auto" }}>
         {!selectedDim ? (
           <div style={{ padding:24, textAlign:"center", color:"var(--ink-disabled)", fontSize:11 }}>选择一个标注</div>
@@ -694,6 +510,7 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
               ))}
             </div>
             {showAI && selectedDim.ai_suggestion && <div style={{ marginBottom:10 }}><AIBadge suggestion={selectedDim.ai_suggestion} /></div>}
+            {/* Status buttons */}
             {!readOnly && (
               <div style={{ display:"flex", gap:4, marginBottom:12 }}>
                 {[["confirmed","确认","var(--signal-green)"],["questionable","存疑","var(--signal-amber)"],["rejected","NOK","var(--signal-red)"],["pending","待审","var(--signal-gray)"]].map(([s,l,c])=>(
@@ -707,6 +524,7 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
                 ))}
               </div>
             )}
+            {/* Discussion */}
             <div style={{ fontSize:10, color:"var(--ink-secondary)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>讨论</div>
             <div style={{ maxHeight:120, overflowY:"auto", marginBottom:8 }}>
               {msgs.length === 0
@@ -739,13 +557,31 @@ function PanelA({ dims, showAI, selectedDimId, onSelectDim, onStatusChange, vers
         )}
       </div>
 
+      {/* Conclusion bar */}
       <ConclusionBar dims={dims} versionInfo={versionInfo} onConfirm={onConfirm} notes={notes} onNotesChange={setNotes} />
     </div>
   );
 }
+```
 
+注意：每次 selectedDimId 变化时，`useEffect` 会加载该标注的消息。消息状态在 `messages` 对象中缓存（keyed by dimId），切换标注时不会丢失已加载的消息。
 
-// ── App ──────────────────────────────────────────────────────────────────────
+---
+
+### Task 9: 重写 App 组件，集成所有新组件
+
+**Step 1: 重写 App 组件**
+
+整合 ReviewProgress 到导航栏 actions 区域，用 PanelA 替换旧的右面板组件串接。
+
+App 组件改动：
+- 导航栏 actions 区域新增 `ReviewProgress`（在版本切换下拉之前）
+- 右侧面板替换为 `<PanelA>` 一个组件
+- 结论提交处理：调用 `PATCH /api/versions/{version_id}/conclusion`
+- 保留现有数据加载 `useEffect`（versions、drawings、dims）
+- 保留现有版本切换逻辑（`handleVersionChange`）
+
+```javascript
 function App() {
   const [versions, setVersions] = useState([]);
   const [currentVersionId, setCurrentVersionId] = useState(versionId);
@@ -754,46 +590,10 @@ function App() {
   const [dims, setDims] = useState([]);
   const [selectedDimId, setSelectedDimId] = useState(null);
   const [versionInfo, setVersionInfo] = useState(null);
+  const [dimFilter, setDimFilter] = useState("all");
   const [ctxMenu, setCtxMenu] = useState(null);
 
-  useEffect(() => {
-    fetch(`/api/parts/${partId}/versions`).then(r => r.json()).then(data => {
-      setVersions(data);
-      const cv = data.find(v => v.id === currentVersionId);
-      if (cv) setVersionInfo(cv);
-    });
-  }, []);
-
-  useEffect(() => {
-    fetch(`/api/versions/${currentVersionId}/drawings`).then(r => r.json()).then(data => {
-      setDrawings(data);
-      if (data.length > 0) setActiveDrawingId(data[0].id);
-    });
-  }, [currentVersionId]);
-
-  useEffect(() => {
-    if (!activeDrawingId) { setDims([]); return; }
-    fetch(`/api/versions/${currentVersionId}/drawings/${activeDrawingId}/dimensions`).then(r => r.json()).then(setDims);
-  }, [currentVersionId, activeDrawingId]);
-
-  const handleVersionChange = vid => {
-    setCurrentVersionId(vid); setActiveDrawingId(null); setSelectedDimId(null);
-    window.history.replaceState(null, "", `/parts/${partId}/versions/${vid}/review`);
-    setVersionInfo(versions.find(v => v.id === vid) || null);
-  };
-
-  const handleStatusChange = async (dimId, newStatus) => {
-    await fetch(`/api/dimensions/${dimId}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ review_status: newStatus }),
-    });
-    setDims(prev => prev.map(d => d.id === dimId ? { ...d, review_status: newStatus } : d));
-  };
-
-  const handleContextMenuDim = (e, dim) => {
-    setCtxMenu({ x: e.clientX, y: e.clientY, dim });
-    setSelectedDimId(dim.id);
-  };
+  // ...existing useEffect blocks for data loading (keep as-is)...
 
   const handleConfirm = async (result, notes) => {
     await fetch(`/api/versions/${currentVersionId}/conclusion`, {
@@ -804,7 +604,6 @@ function App() {
     setVersionInfo(prev => ({ ...prev, confirm_result: result, confirmed_at: new Date().toISOString() }));
   };
 
-  const activeDrawing = drawings.find(d => d.id === activeDrawingId);
   const isReadOnly = versionInfo?.confirm_result != null;
 
   return (
@@ -815,7 +614,8 @@ function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {dims.length > 0 && <ReviewProgress dims={dims} />}
             {versionInfo && <StatusDot status={versionInfo.status} pulse={versionInfo.status === "processing"} />}
-            <select value={currentVersionId} onChange={e => handleVersionChange(Number(e.target.value))} style={{ padding: "4px 8px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 12, outline: "none", cursor: "pointer", fontFamily: "var(--font-mono)" }}>
+            <select value={currentVersionId} onChange={e => handleVersionChange(Number(e.target.value))}
+              style={{ padding: "4px 8px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 12, outline: "none", cursor: "pointer", fontFamily: "var(--font-mono)" }}>
               {versions.map(v => (
                 <option key={v.id} value={v.id}>{v.version_code}{v.is_current ? " (当前)" : ""}</option>
               ))}
@@ -852,8 +652,43 @@ function App() {
     </div>
   );
 }
+```
 
+**Step 2: 确认渲染入口不变**
+
+```javascript
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-{% endraw %}
-</script>
-{% endblock %}
+```
+
+---
+
+### Task 10: 验证页面渲染和功能
+
+**Files:**
+- Browser: `http://localhost:8000/parts/4/versions/4/review`
+
+**Step 1: 启动服务器**
+
+```bash
+cd /Users/rongjie/llm_projects/llm_drawing_review
+uvicorn app.main:app --reload --port 8000
+```
+
+**Step 2: 在浏览器中加载页面**
+
+验证以下功能：
+1. 页面加载无 Babel 语法错误（打开 DevTools Console 检查）
+2. 图纸图片正常加载
+3. 标注标记为圆形，带引线
+4. 缩放/平移/双击适应正常
+5. 缩放工具栏显示百分比和SVG按钮
+6. HintBar 显示后自动淡出
+7. 右侧面板宽度为 320px
+8. 筛选标签切换正常，显示计数
+9. 标注列表显示序号方块、值、状态圆点、消息角标
+10. 选择标注后显示详情（元信息网格、状态按钮、AI 建议）
+11. 讨论功能：加载消息、发送消息
+12. 结论栏：统计计数、备注输入、通过/驳回弹窗
+13. 右键标注弹出上下文菜单，改状态后立即更新
+14. 版本切换菜单正常
+15. 导航栏显示 ReviewProgress 状态药丸和进度条

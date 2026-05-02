@@ -547,10 +547,6 @@ def extract_dimensions_vector(pdf_path: str) -> list[ExtractedDimension]:
                     continue
                 ax = sum((t["x0"] + t["x1"]) / 2 for t in toks) / len(toks)
                 ay = sum((t["y0"] + t["y1"]) / 2 for t in toks) / len(toks)
-                bx0 = min(t["x0"] for t in toks)
-                by0 = min(t["y0"] for t in toks)
-                bx1 = max(t["x1"] for t in toks)
-                by1 = max(t["y1"] for t in toks)
                 value = str(dim.get("value", "")).strip()
                 raw_type = str(dim.get("type", "linear"))
                 _TYPE_MAP = {
@@ -564,6 +560,35 @@ def extract_dimensions_vector(pdf_path: str) -> list[ExtractedDimension]:
                 nominal, tol = _parse_nominal_tol(value)
                 thetas = [t["theta"] for t in toks if "theta" in t]
                 rotation = statistics.median(thetas) if thetas else 0.0
+
+                # Compute OBB by projecting char centers onto text direction.
+                # Stored as "virtual AABB" (cx ± obbW/2, cy ± obbH/2) so the
+                # frontend can use bbox width/height directly without AABB→OBB inversion.
+                theta_rad = math.radians(rotation)
+                cos_t = math.cos(-theta_rad)
+                sin_t = math.sin(-theta_rad)
+                # Project char centers onto text direction to avoid AABB tilt pollution.
+                # Single-token AABB height includes y-offset from tilted text, which
+                # inflates obb_h when rotating corners. Char centers don't have this bias.
+                projs = []
+                max_eff = 0.0
+                for t in toks:
+                    centers = t.get("char_centers", [])
+                    if centers:
+                        for cx, cy in centers:
+                            projs.append(cos_t * cx + sin_t * cy)
+                    else:
+                        projs.append(cos_t * (t["x0"] + t["x1"]) / 2 + sin_t * (t["y0"] + t["y1"]) / 2)
+                    max_eff = max(max_eff, t.get("eff_size", 0.0) or 0.0)
+                if not max_eff:
+                    max_eff = 10.0
+                obb_w = (max(projs) - min(projs)) + max_eff
+                obb_h = max_eff
+                bx0 = ax - obb_w / 2
+                bx1 = ax + obb_w / 2
+                by0 = ay - obb_h / 2
+                by1 = ay + obb_h / 2
+
                 results.append(ExtractedDimension(
                     value=value, nominal=nominal, tolerance=tol,
                     dim_type=dim_type, view_name=None,

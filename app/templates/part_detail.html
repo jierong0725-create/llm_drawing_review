@@ -1,0 +1,388 @@
+{% extends "spa.html" %}
+{% block scripts %}
+<script type="text/babel">
+{% raw %}
+const { useState, useEffect, useRef, useCallback } = React;
+
+const pathParts = window.location.pathname.split("/");
+const partId = pathParts[2] === "new" ? null : Number(pathParts[2]);
+const isNewPart = partId === null;
+
+const PROCESSING_STEPS = [
+  "解析文件格式…",
+  "提取矢量 token…",
+  "运行 LLM 分析…",
+  "写入审核数据库…",
+  "完成",
+];
+
+// ── PartMetaCard ──────────────────────────────────────────────────────────
+function PartMetaCard({ part, versions, onGoWorkbench }) {
+  const currentVersion = versions.find(v => v.is_current);
+  return (
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 8, padding: "18px 24px" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 11, color: "var(--ink-disabled)", fontFamily: "var(--font-mono)", marginBottom: 4 }}>{part.drawing_number}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--ink)", marginBottom: 8 }}>{part.name}</div>
+          <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--ink-secondary)" }}>
+            <span>创建于 {part.created_at}</span>
+            <span>版本数 {versions.length}</span>
+          </div>
+        </div>
+        {currentVersion && (
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: "var(--ink-disabled)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>当前版本</div>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 700, color: "var(--ink)", marginBottom: 4 }}>{currentVersion.version_code}</div>
+            <StatusDot status={currentVersion.status} pulse={currentVersion.status === "processing"} />
+          </div>
+        )}
+      </div>
+      {currentVersion && currentVersion.status === "ready" && (
+        <div style={{ marginTop: 14 }}>
+          <button onClick={() => onGoWorkbench(currentVersion)} style={{
+            padding: "6px 18px", background: "var(--accent-primary)", border: "none",
+            borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600,
+          }}>进入审核工作台 →</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── UploadPanel ────────────────────────────────────────────────────────────
+function UploadPanel({ partId, onUploaded }) {
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [versionCode, setVersionCode] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [uploadState, setUploadState] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) setSelectedFile(file);
+  }, []);
+
+  const startUpload = async () => {
+    if (!selectedFile || !versionCode.trim()) return;
+    setUploadState({ step: 0, done: false });
+
+    const fd = new FormData();
+    fd.append("version_code", versionCode.trim());
+    fd.append("files", selectedFile);
+
+    try {
+      const resp = await fetch(`/parts/${partId}/versions`, { method: "POST", body: fd });
+      if (!resp.ok) { alert("上传失败"); setUploadState(null); return; }
+      const data = await resp.json();
+
+      // Simulate progress steps
+      let step = 0;
+      const interval = setInterval(() => {
+        step++;
+        if (step >= PROCESSING_STEPS.length - 1) {
+          clearInterval(interval);
+          setUploadState(prev => ({ ...prev, step: PROCESSING_STEPS.length - 1, done: true, versionId: data.version_id }));
+        } else {
+          setUploadState(prev => ({ ...prev, step }));
+        }
+      }, 600);
+
+      // Poll for actual completion
+      const poll = setInterval(async () => {
+        const vr = await fetch(`/api/parts/${partId}/versions`).then(r => r.json());
+        const newVer = vr.find(v => v.id === data.version_id);
+        if (newVer && newVer.status !== "processing") {
+          clearInterval(poll);
+          if (onUploaded) onUploaded(newVer);
+        }
+      }, 2000);
+    } catch (err) {
+      alert("上传失败: " + err.message);
+      setUploadState(null);
+    }
+  };
+
+  return (
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border-color)", fontSize: 12, fontWeight: 600, color: "var(--ink)", display: "flex", alignItems: "center", gap: 8 }}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M7 1v8M4 4l3-3 3 3M2 10v2a1 1 0 001 1h8a1 1 0 001-1v-2"/>
+        </svg>
+        上传新版本图纸
+      </div>
+      <div style={{ padding: 20 }}>
+        {uploadState ? (
+          <div style={{ padding: "20px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
+                {uploadState.done ? "✓ 分析完成" : PROCESSING_STEPS[uploadState.step]}
+              </span>
+              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--ink-secondary)" }}>
+                {Math.round((uploadState.step / (PROCESSING_STEPS.length - 1)) * 100)}%
+              </span>
+            </div>
+            <div className="progress-track" style={{ height: 6, marginBottom: 16 }}>
+              <div className="progress-fill" style={{
+                width: ((uploadState.step / (PROCESSING_STEPS.length - 1)) * 100) + "%",
+                background: uploadState.done ? "var(--signal-green)" : "var(--accent-primary)",
+                transition: "width 0.5s ease",
+              }} />
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {PROCESSING_STEPS.map((s, i) => (
+                <span key={i} style={{
+                  fontSize: 10, padding: "2px 8px", borderRadius: 10,
+                  background: i < uploadState.step ? "var(--signal-green)" : i === uploadState.step ? "var(--accent-primary)" : "var(--bg-elevated)",
+                  color: i <= uploadState.step ? "#fff" : "var(--ink-disabled)",
+                  transition: "all 0.3s",
+                }}>{s}</span>
+              ))}
+            </div>
+            {uploadState.done && (
+              <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+                <a href={`/parts/${partId}/versions/${uploadState.versionId}/review`} style={{
+                  padding: "6px 18px", background: "var(--accent-primary)", border: "none",
+                  borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600,
+                  textDecoration: "none", display: "inline-block",
+                }}>进入审核工作台 →</a>
+                <button onClick={() => { setUploadState(null); setSelectedFile(null); }} style={{
+                  padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)",
+                  borderRadius: 2, color: "var(--ink-secondary)", cursor: "pointer", fontSize: 12,
+                }}>继续上传</button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+            <div
+              onDragOver={e => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current && fileInputRef.current.click()}
+              style={{
+                flex: 1, border: "2px dashed " + (dragging ? "var(--accent-primary)" : selectedFile ? "var(--signal-green)" : "var(--border-strong)"),
+                borderRadius: 8, padding: "28px 20px", textAlign: "center", cursor: "pointer",
+                background: dragging ? "var(--accent-dim)" : selectedFile ? "rgba(22,163,74,0.06)" : "var(--bg-canvas)",
+                transition: "all 0.18s",
+              }}
+            >
+              <input ref={fileInputRef} type="file" accept=".dwg,.dxf,.pdf,.jpg,.png" style={{ display: "none" }}
+                onChange={e => { const f = e.target.files[0]; if (f) setSelectedFile(f); }} />
+              {selectedFile ? (
+                <div>
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>📄</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--signal-green)", marginBottom: 4 }}>{selectedFile.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--ink-secondary)" }}>{(selectedFile.size / 1024).toFixed(1)} KB · 点击重新选择</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ marginBottom: 8, color: "var(--ink-disabled)" }}>
+                    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ margin: "0 auto", display: "block" }}>
+                      <path d="M16 4v16M10 10l6-6 6 6M6 24v2a2 2 0 002 2h16a2 2 0 002-2v-2"/>
+                    </svg>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>拖拽或点击上传图纸</div>
+                  <div style={{ fontSize: 11, color: "var(--ink-secondary)" }}>支持 DWG · DXF · PDF · JPG · PNG</div>
+                </div>
+              )}
+            </div>
+            <div style={{ width: 180, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>版本号</div>
+                <input
+                  value={versionCode}
+                  onChange={e => setVersionCode(e.target.value)}
+                  placeholder="如 V1.0"
+                  style={{
+                    width: "100%", padding: "7px 10px",
+                    background: "var(--bg-canvas)", border: "1px solid var(--border-color)",
+                    borderRadius: 4, color: "var(--ink)", fontSize: 13, outline: "none",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                />
+              </div>
+              <button
+                onClick={startUpload}
+                disabled={!selectedFile || !versionCode.trim()}
+                style={{
+                  width: "100%", padding: "8px 0", cursor: "pointer", fontSize: 13, fontWeight: 600,
+                  background: "var(--accent-primary)", border: "none", borderRadius: 2, color: "#fff",
+                  opacity: (!selectedFile || !versionCode.trim()) ? 0.4 : 1,
+                }}
+              >开始分析</button>
+              <div style={{ fontSize: 10, color: "var(--ink-disabled)", lineHeight: 1.5 }}>
+                上传后 LLM 将自动识别所有尺寸标注，通常需要 10–30 秒
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── VersionHistory ─────────────────────────────────────────────────────────
+function VersionHistory({ versions, partId, onGoWorkbench }) {
+  if (versions.length === 0) return null;
+  return (
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border-color)", fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>版本历史</div>
+      <table className="industrial">
+        <thead>
+          <tr>
+            <th>版本号</th><th>状态</th><th>创建时间</th><th>备注</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {versions.map(v => (
+            <tr key={v.id}>
+              <td>
+                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{v.version_code}</span>
+                {v.is_current && <span style={{ marginLeft: 8, fontSize: 9, background: "var(--accent-primary)", color: "#fff", borderRadius: 2, padding: "1px 5px", fontWeight: 700 }}>当前</span>}
+              </td>
+              <td><StatusDot status={v.status} pulse={v.status === "processing"} /></td>
+              <td><span style={{ fontSize: 11, color: "var(--ink-secondary)" }}>{v.created_at}</span></td>
+              <td><span style={{ fontSize: 11, color: "var(--ink-secondary)" }}>{v.notes || "—"}</span></td>
+              <td>
+                {v.status === "ready" && (
+                  <button onClick={() => onGoWorkbench(v)} style={{
+                    padding: "3px 12px", background: "transparent", border: "1px solid var(--border-color)",
+                    borderRadius: 2, color: "var(--ink-secondary)", cursor: "pointer", fontSize: 11,
+                  }}>审核 →</button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── NewPartForm ────────────────────────────────────────────────────────────
+function NewPartForm({ onCreated }) {
+  const [name, setName] = useState("");
+  const [drawingNumber, setDrawingNumber] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(""); setSubmitting(true);
+    const fd = new FormData();
+    fd.append("name", name); fd.append("drawing_number", drawingNumber);
+    try {
+      const resp = await fetch("/parts/api/create", { method: "POST", body: fd });
+      if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "创建失败"); }
+      const part = await resp.json();
+      onCreated(part);
+    } catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
+  };
+
+  return (
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 8, padding: "18px 24px" }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <line x1="7" y1="1" x2="7" y2="13"/><line x1="1" y1="7" x2="13" y2="7"/>
+        </svg>
+        新建零件
+      </div>
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: "block", fontSize: 10, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>图号</label>
+            <input value={drawingNumber} onChange={e => setDrawingNumber(e.target.value)} placeholder="例：ENG-001-A" required
+              style={{ width: "100%", padding: "6px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 13, outline: "none", fontFamily: "var(--font-mono)" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: "block", fontSize: 10, color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>零件名称</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="例：发动机缸体" required
+              style={{ width: "100%", padding: "6px 10px", background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 2, color: "var(--ink)", fontSize: 13, outline: "none" }} />
+          </div>
+        </div>
+        {error && <div style={{ color: "var(--signal-red)", fontSize: 12, marginBottom: 8 }}>{error}</div>}
+        <button type="submit" disabled={submitting} style={{
+          padding: "6px 24px", background: "var(--accent-primary)", border: "none",
+          borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600,
+          opacity: submitting ? 0.5 : 1,
+        }}>{submitting ? "创建中..." : "创建零件"}</button>
+      </form>
+    </div>
+  );
+}
+
+// ── App ────────────────────────────────────────────────────────────────────
+function App() {
+  const [part, setPart] = useState(null);
+  const [versions, setVersions] = useState([]);
+  const [createdPartId, setCreatedPartId] = useState(null);
+
+  useEffect(() => {
+    if (isNewPart) return;
+    fetch(`/parts/api/${partId}`).then(r => r.json()).then(setPart);
+    fetch(`/api/parts/${partId}/versions`).then(r => r.json()).then(setVersions);
+  }, []);
+
+  // After new part is created, fetch its details and set up the page
+  useEffect(() => {
+    if (!createdPartId) return;
+    fetch(`/parts/api/${createdPartId}`).then(r => r.json()).then(setPart);
+    fetch(`/api/parts/${createdPartId}/versions`).then(r => r.json()).then(setVersions);
+    window.history.replaceState(null, "", `/parts/${createdPartId}`);
+  }, [createdPartId]);
+
+  const handleGoWorkbench = (v) => {
+    const pid = part?.id || createdPartId;
+    if (pid) window.location.href = `/parts/${pid}/versions/${v.id}/review`;
+  };
+
+  const handleUploaded = (newVer) => {
+    setVersions(prev => [newVer, ...prev.map(v => ({ ...v, is_current: false }))]);
+  };
+
+  // New part flow: show form first, then upload after creation
+  if (isNewPart && !createdPartId) {
+    return (
+      <AppShell breadcrumbs={[{ label: "零件列表", href: "/parts/" }, { label: "新增零件" }]}>
+        <div style={{ flex: 1, overflow: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 20, maxWidth: 860, margin: "0 auto", width: "100%" }}>
+          <NewPartForm onCreated={(p) => setCreatedPartId(p.id)} />
+        </div>
+      </AppShell>
+    );
+  }
+
+  const currentVersion = versions.find(v => v.is_current);
+  const displayPart = part || { id: createdPartId, name: "", drawing_number: "", created_at: "" };
+
+  return (
+    <AppShell
+      breadcrumbs={[
+        { label: "零件列表", href: "/parts/" },
+        { label: (part ? part.drawing_number + " · " + part.name : "零件详情") },
+      ]}
+      actions={
+        currentVersion && currentVersion.status === "ready" && (
+          <button onClick={() => handleGoWorkbench(currentVersion)} style={{
+            padding: "5px 16px", background: "var(--accent-primary)", border: "none",
+            borderRadius: 2, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600,
+          }}>进入审核工作台 →</button>
+        )
+      }
+    >
+      <div style={{ flex: 1, overflow: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 20, maxWidth: 860, margin: "0 auto", width: "100%" }}>
+        {part && <PartMetaCard part={part} versions={versions} onGoWorkbench={handleGoWorkbench} />}
+        <UploadPanel partId={part?.id || createdPartId} onUploaded={handleUploaded} />
+        <VersionHistory versions={versions} partId={part?.id || createdPartId} onGoWorkbench={handleGoWorkbench} />
+      </div>
+    </AppShell>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+{% endraw %}
+</script>
+{% endblock %}

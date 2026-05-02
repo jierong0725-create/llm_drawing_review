@@ -1,0 +1,451 @@
+{
+  "dimensions": [
+    {
+      "token_ids": [
+        198,
+        199
+      ],
+      "type": "linear",
+      "value": "69.5 ±0.4"
+    },
+    {
+      "token_ids": [
+        197
+      ],
+      "type": "gdt",
+      "value": "⊕ 0.4ABC"
+    },
+    {
+      "token_ids": [
+        191
+      ],
+      "type": "linear",
+      "value": "2X max21.48"
+    },
+    {
+      "token_ids": [
+        185,
+        186
+      ],
+      "type": "linear",
+      "value": "2X16 ±0.3"
+    },
+    {
+      "token_ids": [
+        239,
+        238
+      ],
+      "type": "radius",
+      "value": "14X R3"
+    },
+    {
+      "token_ids": [
+        260,
+        259
+      ],
+      "type": "radius",
+      "value": "2X R1"
+    },
+    {
+      "token_ids": [
+        263,
+        264,
+        265
+      ],
+      "type": "linear",
+      "value": "47.81°"
+    },
+    {
+      "token_ids": [
+        183,
+        184
+      ],
+      "type": "linear",
+      "value": "2X2 ±0.3"
+    },
+    {
+      "token_ids": [
+        187,
+        188
+      ],
+      "type": "linear",
+      "value": "2X3.31 ±0.1"
+    },
+    {
+      "token_ids": [
+        190
+      ],
+      "type": "gdt",
+      "value": "⊕ 0.3ABC"
+    },
+    {
+      "token_ids": [
+        232,
+        233
+      ],
+      "type": "linear",
+      "value": "5.1 ±0.1"
+    },
+    {
+      "token_ids": [
+        200,
+        201
+      ],
+      "type": "diameter",
+      "value": "⌀2.7 ±0.1"
+    },
+    {
+      "token_ids": [
+        207,
+        208,
+        209
+      ],
+      "type": "linear",
+      "value": "2X 14.96 ±0.3"
+    },
+    {
+      "token_ids": [
+        211,
+        212,
+        213
+      ],
+      "type": "linear",
+      "value": "2X 42.66 ±0.4"
+    },
+    {
+      "token_ids": [
+        214,
+        215,
+        216
+      ],
+      "type": "linear",
+      "value": "2X 47.7 ±0.3"
+    },
+    {
+      "token_ids": [
+        217
+      ],
+      "type": "linear",
+      "value": "(20)"
+    },
+    {
+      "token_ids": [
+        171
+      ],
+      "type": "linear",
+      "value": "(20)"
+    },
+    {
+      "token_ids": [
+        173
+      ],
+      "type": "linear",
+      "value": "(20)"
+    },
+    {
+      "token_ids": [
+        240,
+        241,
+        242
+      ],
+      "type": "radius",
+      "value": "2X R2 ±0.4"
+    },
+    {
+      "token_ids": [
+        234,
+        235,
+        236,
+        237
+      ],
+      "type": "radius",
+      "value": "2X R2 ±0.4"
+    },
+    {
+      "token_ids": [
+        243,
+        244,
+        245
+      ],
+      "type": "radius",
+      "value": "R3 ±0.3"
+    },
+    {
+      "token_ids": [
+        247,
+        246
+      ],
+      "type": "radius",
+      "value": "R2 ±0.4"
+    },
+    {
+      "token_ids": [
+        248,
+        249,
+        250
+      ],
+      "type": "radius",
+      "value": "R2 ±0.4"
+    },
+    {
+      "token_ids": [
+        262,
+        261
+      ],
+      "type": "radius",
+      "value": "R4.2"
+    },
+    {
+      "token_ids": [
+        267,
+        268,
+        266
+      ],
+      "type": "radius",
+      "value": "2X R10"
+    },
+    {
+      "token_ids": [
+        252,
+        253,
+        254,
+        251
+      ],
+      "type": "linear",
+      "value": "2X 1.55°"
+    },
+    {
+      "token_ids": [
+        218,
+        219,
+        220
+      ],
+      "type": "linear",
+      "value": "2X 5.7 ±0.2"
+    },
+    {
+      "token_ids": [
+        221,
+        222
+      ],
+      "type": "linear",
+      "value": "2X5 ±0.2"
+    },
+    {
+      "token_ids": [
+        223,
+        224,
+        225
+      ],
+      "type": "linear",
+      "value": "2X 21.16 ±0.3"
+    },
+    {
+      "token_ids": [
+        227,
+        228,
+        229
+      ],
+      "type": "linear",
+      "value": "2X 37.91 ±0.5"
+    },
+    {
+      "token_ids": [
+        230,
+        231
+      ],
+      "type": "linear",
+      "value": "41.16 ±0.3"
+    },
+    {
+      "token_ids": [
+        226
+      ],
+      "type": "linear",
+      "value": "(20)"
+    },
+    {
+      "token_ids": [
+        132
+      ],
+      "type": "linear",
+      "value": "14.7"
+    },
+    {
+      "token_ids": [
+        102
+      ],
+      "type": "linear",
+      "value": "13"
+    },
+    {
+      "token_ids": [
+        114
+      ],
+      "type": "linear",
+      "value": "0"
+    },
+    {
+      "token_ids": [
+        77,
+        88
+      ],
+      "type": "linear",
+      "value": "1.95 0"
+    },
+    {
+      "token_ids": [
+        126,
+        127
+      ],
+      "type": "linear",
+      "value": "10 ±0.1"
+    },
+    {
+      "token_ids": [
+        122
+      ],
+      "type": "gdt",
+      "value": "⊕ 0.2AB"
+    },
+    {
+      "token_ids": [
+        162,
+        163
+      ],
+      "type": "linear",
+      "value": "12 ±0.2"
+    },
+    {
+      "token_ids": [
+        160
+      ],
+      "type": "gdt",
+      "value": "⊕ 0.3ABC"
+    },
+    {
+      "token_ids": [
+        164,
+        165
+      ],
+      "type": "linear",
+      "value": "15.9 ±0.2"
+    },
+    {
+      "token_ids": [
+        156,
+        158,
+        155
+      ],
+      "type": "linear",
+      "value": "17.9 +0.2/-0.6"
+    },
+    {
+      "token_ids": [
+        161
+      ],
+      "type": "linear",
+      "value": "0.2"
+    },
+    {
+      "token_ids": [
+        168
+      ],
+      "type": "roughness",
+      "value": "Ra 1.25"
+    },
+    {
+      "token_ids": [
+        182
+      ],
+      "type": "roughness",
+      "value": "Ra 1.25"
+    },
+    {
+      "token_ids": [
+        179
+      ],
+      "type": "gdt",
+      "value": "⊕ 0.3ABC"
+    },
+    {
+      "token_ids": [
+        180
+      ],
+      "type": "linear",
+      "value": "0.2"
+    },
+    {
+      "token_ids": [
+        78,
+        79
+      ],
+      "type": "linear",
+      "value": "12 ±0.2"
+    },
+    {
+      "token_ids": [
+        94
+      ],
+      "type": "linear",
+      "value": "±0.2"
+    },
+    {
+      "token_ids": [
+        95,
+        96
+      ],
+      "type": "linear",
+      "value": "6 ±0.2"
+    },
+    {
+      "token_ids": [
+        108
+      ],
+      "type": "linear",
+      "value": "-0.25"
+    },
+    {
+      "token_ids": [
+        206
+      ],
+      "type": "linear",
+      "value": "0.2"
+    },
+    {
+      "token_ids": [
+        153
+      ],
+      "type": "datum",
+      "value": "A"
+    },
+    {
+      "token_ids": [
+        106
+      ],
+      "type": "datum",
+      "value": "A"
+    },
+    {
+      "token_ids": [
+        119
+      ],
+      "type": "datum",
+      "value": "B"
+    },
+    {
+      "token_ids": [
+        129
+      ],
+      "type": "datum",
+      "value": "C"
+    },
+    {
+      "token_ids": [
+        112
+      ],
+      "type": "datum",
+      "value": "C"
+    }
+  ]
+}
