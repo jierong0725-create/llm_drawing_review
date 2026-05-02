@@ -3,8 +3,6 @@ import threading
 from datetime import datetime
 from typing import List
 
-import pdfplumber
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -15,10 +13,7 @@ from ..models import (
     Part, Version, Drawing, Dimension,
     ProcessingStatus, ConfirmResult, DimensionSource, DimensionType,
 )
-from ..services.extractor import extract_from_pdf, filter_by_views, filter_excluded
-from ..services.vision import vision_check
-from ..services.reconciler import reconcile
-from ..services.analyzer import detect_excluded_regions, extract_dimensions_tiled
+from ..services.analyzer import extract_dimensions_vector
 from ..services.image_gen import generate_drawing_images, RASTER_DPI
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "drawings")
@@ -175,43 +170,20 @@ def create_version(
 
 
 def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> None:
-    """Background task: tile-based dimension extraction pipeline.
+    """Background task: vector-token dimension extraction pipeline.
 
-    Phase 1: Detect excluded regions (title block, tolerance notes, etc.)
-    Phase 2a: pdfplumber text extraction + filter excluded
-    Phase 2b: Tile-based LLM extraction (full-res, parallel)
-    Phase 3: Reconcile + global sequence numbering
+    Single phase: extract rotation-aware tokens from PDF vector layer,
+    send full-page image + token list to LLM in one call, map token_ids
+    back to PDF-point anchor coordinates.
     """
     PDF_SCALE = RASTER_DPI / 72.0  # PDF points → image pixels
     db: Session = SessionLocal()
-    _ANTHROPIC_OK = False
-    try:
-        import anthropic
-        _ANTHROPIC_OK = os.getenv("ANTHROPIC_API_KEY") is not None
-    except ImportError:
-        pass
 
     try:
         for drawing_id, pdf_path in drawing_paths:
             try:
-                # Phase 1: Detect excluded regions (title block, tolerance notes, etc.)
-                excluded = []
-                if _ANTHROPIC_OK:
-                    excluded = detect_excluded_regions(pdf_path)
+                final_dims = extract_dimensions_vector(pdf_path)
 
-                # Phase 2a: pdfplumber text extraction + filter excluded
-                program_dims = extract_from_pdf(pdf_path)
-                program_dims = filter_excluded(program_dims, excluded, is_pixels=False)
-
-                # Phase 2b: Tile-based LLM extraction (full-res, parallel)
-                llm_dims: list = []
-                if _ANTHROPIC_OK:
-                    llm_dims = extract_dimensions_tiled(pdf_path, excluded)
-
-                # Phase 3: Reconcile
-                final_dims = reconcile(program_dims, llm_dims, views=None)
-
-                # Sequence numbering (global, no view grouping)
                 for seq, dim in enumerate(final_dims, start=1):
                     record = Dimension(
                         drawing_id=drawing_id,
@@ -224,6 +196,11 @@ def _process_version(version_id: int, drawing_paths: list[tuple[int, str]]) -> N
                         source=DimensionSource(dim.source),
                         anchor_x=dim.anchor_x * PDF_SCALE if dim.anchor_x is not None else None,
                         anchor_y=dim.anchor_y * PDF_SCALE if dim.anchor_y is not None else None,
+                        bbox_x0=dim.bbox_x0 * PDF_SCALE if dim.bbox_x0 is not None else None,
+                        bbox_y0=dim.bbox_y0 * PDF_SCALE if dim.bbox_y0 is not None else None,
+                        bbox_x1=dim.bbox_x1 * PDF_SCALE if dim.bbox_x1 is not None else None,
+                        bbox_y1=dim.bbox_y1 * PDF_SCALE if dim.bbox_y1 is not None else None,
+                        rotation_deg=dim.rotation_deg,
                     )
                     db.add(record)
                 db.commit()

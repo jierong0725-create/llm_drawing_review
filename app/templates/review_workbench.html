@@ -16,7 +16,7 @@ function btnStyle(variant, extra = {}) {
 }
 
 const STATUS_COLOR = {
-  pending: "var(--signal-gray)",
+  pending: "var(--signal-highlight)",
   confirmed: "var(--signal-green)",
   questionable: "var(--signal-amber)",
   rejected: "var(--signal-red)",
@@ -24,7 +24,86 @@ const STATUS_COLOR = {
 };
 const DIM_COLORS = STATUS_COLOR;
 
+// ── MarkerBox ──────────────────────────────────────────────────────────────────
+// Lightweight rectangle drawn around a dimension's token bbox (PDF-pixel coords).
+// Rotates with the dimension text and places the sequence badge at the text start.
+function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContextMenu }) {
+  const x = dim.bbox_x0 * zoom + offsetX;
+  const y = dim.bbox_y0 * zoom + offsetY;
+  const w = (dim.bbox_x1 - dim.bbox_x0) * zoom;
+  const h = (dim.bbox_y1 - dim.bbox_y0) * zoom;
+  const color = STATUS_COLOR[dim.review_status] || STATUS_COLOR.pending;
+  const isPending = dim.review_status === "pending" || !dim.review_status;
+  const labelFont = Math.round(Math.max(8, Math.min(10, 9 / Math.sqrt(Math.max(zoom, 0.15)))));
+  const labelH = labelFont + 3;
+  const rot = Number(dim.rotation_deg) || 0;
+
+  const rectW = Math.max(w + 4, 8);
+  const rectH = Math.max(h + 4, 8);
+  const badgeW = String(dim.sequence).length * (labelFont * 0.6) + 6;
+
+  // transformOrigin is the center of the rectangle within the wrapper
+  const originX = badgeW + 2 + rectW / 2;
+  const originY = rectH / 2;
+
+  return (
+    <div
+      data-marker="true"
+      style={{
+        position: "absolute",
+        left: x - 2 - badgeW - 2,
+        top: y - 2,
+        width: rectW + badgeW + 2,
+        height: rectH,
+        transform: `rotate(${-rot}deg)`,
+        transformOrigin: `${originX}px ${originY}px`,
+        pointerEvents: "none",
+        zIndex: isSelected ? 25 : 10,
+      }}
+    >
+      {/* badge — left side (text start) */}
+      <div
+        data-marker="true"
+        onClick={e => { e.stopPropagation(); onClick(dim.id); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
+        style={{
+          position: "absolute", left: 0, top: "50%",
+          transform: "translateY(-50%)",
+          height: labelH, padding: "0 3px",
+          backgroundColor: color, color: "#fff",
+          fontFamily: "var(--font-mono)", fontSize: labelFont, fontWeight: 700,
+          lineHeight: `${labelH}px`,
+          borderRadius: 2,
+          cursor: "pointer", pointerEvents: "auto",
+          whiteSpace: "nowrap",
+        }}
+        title={`#${dim.sequence} ${dim.value}`}
+      >
+        {dim.sequence}
+      </div>
+      {/* rectangle */}
+      <div
+        data-marker="true"
+        onClick={e => { e.stopPropagation(); onClick(dim.id); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
+        style={{
+          position: "absolute", left: badgeW + 2, top: 0,
+          width: rectW, height: rectH,
+          border: `${isSelected ? 2.5 : 1.5}px solid ${color}`,
+          borderRadius: 2,
+          backgroundColor: isSelected ? "rgba(255,255,255,0.04)" : (isPending ? "var(--signal-highlight-soft)" : "transparent"),
+          boxShadow: isSelected ? `0 0 0 3px var(--accent-dim)` : "none",
+          cursor: "pointer", pointerEvents: "auto",
+          boxSizing: "border-box",
+        }}
+        title={`#${dim.sequence} ${dim.value}`}
+      />
+    </div>
+  );
+}
+
 // ── MarkerLabel ────────────────────────────────────────────────────────────────
+// Legacy circle marker — used as fallback when a dimension lacks bbox coords.
 function MarkerLabel({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContextMenu, originalX, originalY }) {
   const cx = dim.anchor_x * zoom + offsetX;
   const cy = dim.anchor_y * zoom + offsetY;
@@ -282,14 +361,24 @@ function DrawingCanvas({ drawing, dims, selectedDimId, onSelectDim, onContextMen
         </svg>
       )}
       {adjustedDims.map(d => (
-        <MarkerLabel key={d.id}
-          dim={{ ...d, anchor_x: d.anchor_x + d._gx, anchor_y: d.anchor_y + d._gy }}
-          originalX={d.anchor_x} originalY={d.anchor_y}
-          zoom={zoom} offsetX={offset.x} offsetY={offset.y}
-          isSelected={d.id === selectedDimId}
-          onClick={onSelectDim}
-          onContextMenu={!readOnly ? onContextMenuDim : undefined}
-        />
+        d.bbox_x0 != null && d.bbox_x1 != null ? (
+          <MarkerBox key={d.id}
+            dim={d}
+            zoom={zoom} offsetX={offset.x} offsetY={offset.y}
+            isSelected={d.id === selectedDimId}
+            onClick={onSelectDim}
+            onContextMenu={!readOnly ? onContextMenuDim : undefined}
+          />
+        ) : (
+          <MarkerLabel key={d.id}
+            dim={{ ...d, anchor_x: d.anchor_x + d._gx, anchor_y: d.anchor_y + d._gy }}
+            originalX={d.anchor_x} originalY={d.anchor_y}
+            zoom={zoom} offsetX={offset.x} offsetY={offset.y}
+            isSelected={d.id === selectedDimId}
+            onClick={onSelectDim}
+            onContextMenu={!readOnly ? onContextMenuDim : undefined}
+          />
+        )
       ))}
       <HintBar />
     </div>

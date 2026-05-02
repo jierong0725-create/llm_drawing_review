@@ -10,8 +10,10 @@ Strategy:
 Returns a list of ExtractedDimension dicts ready for the reconciler.
 """
 
+import math
 import re
 from dataclasses import dataclass, field, replace
+from itertools import groupby
 from typing import Optional
 import pdfplumber
 
@@ -60,6 +62,11 @@ class ExtractedDimension:
     anchor_x: Optional[float]
     anchor_y: Optional[float]
     page: int
+    bbox_x0: Optional[float] = None
+    bbox_y0: Optional[float] = None
+    bbox_x1: Optional[float] = None
+    bbox_y1: Optional[float] = None
+    rotation_deg: float = 0.0
 
 
 def extract_from_pdf(pdf_path: str) -> list[ExtractedDimension]:
@@ -317,6 +324,80 @@ def filter_by_views(
         filtered.append(replace(dim, view_name=view_name))
 
     return filtered
+
+
+def extract_tokens_vector(page, border: float = 30.0) -> list[dict]:
+    """Extract rotation-aware tokens from a pdfplumber page (PDF-point coords).
+
+    Ported from /private/tmp/pdf_probe/prototype.py. Groups chars into tokens
+    using rotation-aware clustering: projects each char into its local text-line
+    frame, buckets by 5° rotation bins, merges chars whose projected gap is less
+    than 1.5× the effective glyph size.
+    """
+    W, H = page.width, page.height
+    inner = [
+        c for c in page.chars
+        if border < c["x0"] < W - border and border < c["top"] < H - border
+    ]
+
+    enriched = []
+    for c in inner:
+        m = c.get("matrix") or (1, 0, 0, 1, 0, 0)
+        a, b, _c, _d, e, f = m
+        theta = math.atan2(b, a)
+        scale = math.hypot(a, b) or 1.0
+        eff = (c["size"] or 1.0) * scale
+        cos_t, sin_t = math.cos(-theta), math.sin(-theta)
+        lx = cos_t * e - sin_t * f
+        ly = sin_t * e + cos_t * f
+        rot_bin = round(math.degrees(theta) / 5) * 5
+        enriched.append((c, lx, ly, rot_bin, eff))
+
+    enriched.sort(key=lambda t: (t[3], round(t[2]), t[1]))
+
+    raw_tokens: list[list] = []
+    for _, grp in groupby(enriched, key=lambda t: (t[3], round(t[2]))):
+        g = list(grp)
+        cur = [g[0]]
+        for item in g[1:]:
+            prev = cur[-1]
+            if item[1] - prev[1] < prev[4] * 1.5:
+                cur.append(item)
+            else:
+                raw_tokens.append([t[0] for t in cur])
+                cur = [item]
+        raw_tokens.append([t[0] for t in cur])
+
+    out: list[dict] = []
+    for i, chars in enumerate(raw_tokens):
+        text = "".join(c["text"] for c in chars)
+        if not text.strip():
+            continue
+        m0 = chars[0].get("matrix") or (1, 0, 0, 1, 0, 0)
+        theta_t = math.atan2(m0[1], m0[0])
+        eff_sizes = []
+        centers = []
+        for c in chars:
+            mc = c.get("matrix") or (1, 0, 0, 1, 0, 0)
+            sc = math.hypot(mc[0], mc[1]) or 1.0
+            eff_sizes.append((c["size"] or 1.0) * sc)
+            centers.append([
+                round((c["x0"] + c["x1"]) / 2, 2),
+                round((c["top"] + c["bottom"]) / 2, 2),
+            ])
+        out.append({
+            "id": i,
+            "text": text,
+            "x0": round(min(c["x0"] for c in chars), 2),
+            "y0": round(min(c["top"] for c in chars), 2),
+            "x1": round(max(c["x1"] for c in chars), 2),
+            "y1": round(max(c["bottom"] for c in chars), 2),
+            "size": round(sum(c["size"] for c in chars) / len(chars), 2),
+            "theta": round(math.degrees(theta_t), 2),
+            "eff_size": round(max(eff_sizes), 2),
+            "char_centers": centers,
+        })
+    return out
 
 
 def filter_excluded(

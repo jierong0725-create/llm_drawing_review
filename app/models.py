@@ -98,7 +98,12 @@ class Dimension(Base):
     # 在标注 JPG 中的坐标（像素）
     anchor_x = Column(Float, nullable=True)
     anchor_y = Column(Float, nullable=True)
+    bbox_x0 = Column(Float, nullable=True)
+    bbox_y0 = Column(Float, nullable=True)
+    bbox_x1 = Column(Float, nullable=True)
+    bbox_y1 = Column(Float, nullable=True)
     review_status = Column(Enum(ReviewStatus), default=ReviewStatus.pending)
+    rotation_deg = Column(Float, nullable=False, default=0.0)
 
     drawing = relationship("Drawing", back_populates="dimensions")
     messages = relationship("ReviewMessage", back_populates="dimension", order_by="ReviewMessage.created_at")
