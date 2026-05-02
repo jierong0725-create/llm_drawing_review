@@ -43,7 +43,7 @@ function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContext
 
   // transformOrigin = rectangle center within wrapper
   const originX = badgeW + rectW / 2;
-  const originY = labelH + rectH / 2;
+  const originY = rectH / 2;
 
   return (
     <div
@@ -51,16 +51,16 @@ function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContext
       style={{
         position: "absolute",
         left: x - 2 - badgeW,
-        top: y - 2 - labelH,
+        top: y - 2,
         width: badgeW + rectW,
-        height: labelH + rectH,
+        height: rectH,
         transform: `rotate(${-rot}deg)`,
         transformOrigin: `${originX}px ${originY}px`,
         pointerEvents: "none",
         zIndex: isSelected ? 25 : 10,
       }}
     >
-      {/* badge — top-left outer corner */}
+      {/* badge — top-right aligns with rectangle top-left */}
       <div
         data-marker="true"
         onClick={e => { e.stopPropagation(); onClick(dim.id); }}
@@ -85,7 +85,7 @@ function MarkerBox({ dim, zoom, offsetX, offsetY, isSelected, onClick, onContext
         onClick={e => { e.stopPropagation(); onClick(dim.id); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(e, dim); }}
         style={{
-          position: "absolute", left: badgeW, top: labelH,
+          position: "absolute", left: badgeW, top: 0,
           width: rectW, height: rectH,
           border: `${isSelected ? 2.5 : 1.5}px solid ${color}`,
           borderRadius: 2,
